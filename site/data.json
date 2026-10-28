@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "genere_a": "2026-10-28T17:03:42Z",
+  "genere_a": "2026-10-28T17:11:52Z",
   "releves": {
     "local-pc": {
       "schema_version": 1,
       "source": "local-pc",
-      "releve_a": "2026-10-28T17:03:42Z",
+      "releve_a": "2026-10-28T17:11:51Z",
       "seuil_perime_heures": 24,
       "projets": [
         {
