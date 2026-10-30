@@ -91,3 +91,121 @@ h3 { font-size: 1rem; margin: 0; overflow-wrap: anywhere; }
 dl { margin: 0; }
 dt { color: var(--discret); font-size: 0.8125rem; margin-top: 8px; }
 dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ---------- Carte Falling Pickaxe ---------- */
+.carte-large { grid-column: 1 / -1; }
+
+.fp-entete { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.badge-live, .badge-arret { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.8125rem; font-weight: 700; }
+.badge-live { background: var(--ok-fond); color: var(--ok-texte); }
+.badge-arret { background: var(--bordure); color: var(--texte); }
+
+.fp-acces { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.lien {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--bordure); border-radius: 8px; background: var(--carte);
+  color: var(--accent); font-weight: 600; text-decoration: none;
+}
+.lien:hover { border-color: var(--accent); }
+.lien-principal { background: var(--accent); color: var(--accent-texte); border-color: var(--accent); }
+
+.alerte { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; border-left: 4px solid var(--bordure); }
+.alerte-info { color: var(--discret); }
+.alerte-avertissement { color: var(--alerte-texte); background: var(--alerte-fond); border-left-color: var(--alerte-texte); }
+.alerte-erreur { color: var(--erreur-texte); background: var(--erreur-fond); border-left-color: var(--erreur-texte); }
+
+.fp-chiffres { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 12px 0 4px; }
+.tuile { display: flex; flex-direction: column; min-width: 0; padding: 8px 12px; border: 1px solid var(--bordure); border-radius: 10px; }
+.tuile-valeur { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+.tuile-nom { color: var(--discret); font-size: 0.8125rem; }
+.variation { font-size: 0.8125rem; font-weight: 600; }
+.variation-hausse { color: var(--ok-texte); }
+.variation-baisse { color: var(--erreur-texte); }
+.variation-stable { color: var(--discret); }
+.fp-ages { margin: 0 0 12px; font-size: 0.8125rem; overflow-wrap: anywhere; }
+
+.fp-courbes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.fp-courbe-titre { font-size: 0.9rem; font-weight: 600; }
+.courbe { display: block; width: 100%; height: 64px; }
+.courbe polyline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.fp-courbe-resume { font-size: 0.8125rem; overflow-wrap: anywhere; }
+
+.fp-section { margin-top: 12px; border-top: 1px solid var(--bordure); }
+.fp-section > summary { display: flex; align-items: center; min-height: 44px; font-size: 0.95rem; font-weight: 700; cursor: pointer; }
+.fp-section[open] > summary { margin-bottom: 4px; }
+.fp-liste { margin: 0; padding: 0; list-style: none; }
+.fp-ligne { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--bordure); }
+.fp-titre { flex: 1 1 220px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.fp-meta { font-size: 0.8125rem; overflow-wrap: anywhere; }
+.fp-liens { display: flex; gap: 8px; }
+.fp-liens .lien { min-height: 36px; padding: 0 10px; font-size: 0.875rem; }
+progress { width: 100%; height: 14px; accent-color: var(--accent); }
+
+/* ---------- Commandes du live ---------- */
+.fp-commandes { margin: 12px 0; padding: 12px; border: 1px solid var(--bordure); border-radius: 10px; }
+.fp-commandes[hidden] { display: none; }
+.badge-simulation, .badge-reel { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.8125rem; font-weight: 700; }
+.badge-simulation { background: var(--alerte-fond); color: var(--alerte-texte); }
+.badge-reel { background: var(--erreur-fond); color: var(--erreur-texte); }
+
+.bouton {
+  min-height: 48px; padding: 0 20px; border: 1px solid var(--bordure); border-radius: 10px;
+  background: var(--carte); color: var(--texte); font: inherit; font-weight: 700; cursor: pointer;
+}
+.bouton:disabled { opacity: 0.5; cursor: not-allowed; }
+.bouton-principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.bouton-danger { background: var(--erreur-fond); border-color: var(--erreur-texte); color: var(--erreur-texte); }
+
+.cmd-message { min-height: 1.5em; margin: 8px 0; font-weight: 600; overflow-wrap: anywhere; }
+.cmd-message[data-type="ok"] { color: var(--ok-texte); }
+.cmd-message[data-type="erreur"] { color: var(--erreur-texte); }
+.cmd-message[data-type="info"] { color: var(--discret); }
+.cmd-confirmation { margin-top: 12px; padding: 12px; border: 2px solid var(--erreur-texte); border-radius: 10px; background: var(--carte); }
+.cmd-titre { margin: 0 0 8px; font-size: 1.05rem; font-weight: 700; }
+.cmd-avertissement { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--alerte-fond); color: var(--alerte-texte); overflow-wrap: anywhere; }
+.cmd-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+
+/* ---------- Concours Gratuits FR, Produits numériques ---------- */
+.badge-ok, .badge-attention { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.8125rem; font-weight: 700; }
+.badge-ok { background: var(--ok-fond); color: var(--ok-texte); }
+.badge-attention { background: var(--alerte-fond); color: var(--alerte-texte); }
+.bouton-secondaire { min-height: 40px; padding: 0 14px; font-size: 0.9rem; }
+.alerte-action { color: var(--texte); background: var(--carte); border-left-color: var(--accent); }
+.cc-alertes { margin: 12px 0; }
+.tuile-valeur-texte { font-size: 1.2rem; overflow-wrap: anywhere; }
+.cc-carte { flex-direction: column; align-items: stretch; }
+.cc-carte-haut { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.cc-decision { margin-top: 8px; }
+.cc-boutons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cc-accroche { flex-basis: 100%; font-style: italic; }
+.rev-formulaire { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; align-items: end; margin: 8px 0; }
+.rev-champ { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rev-champ input, .rev-champ select {
+  min-height: 44px; padding: 0 10px; border: 1px solid var(--bordure); border-radius: 8px;
+  background: var(--carte); color: var(--texte); font: inherit; min-width: 0;
+}
+.vue-ensemble .carte { border-color: var(--accent); }
+
+/* ---------- Onglets ---------- */
+.onglets {
+  position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; padding: 8px 0;
+  background: var(--fond); border-bottom: 1px solid var(--bordure); scrollbar-width: none;
+}
+.onglets::-webkit-scrollbar { display: none; }
+.onglet {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--bordure); border-radius: 999px; background: var(--carte); color: var(--texte);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.onglet[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.pastille { min-width: 22px; padding: 0 6px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 20px; }
+.pastille-attention { background: var(--alerte-fond); color: var(--alerte-texte); }
+.pastille-info { background: var(--bordure); color: var(--texte); }
+.pastille-ok { background: var(--ok-fond); color: var(--ok-texte); }
+.panneau[hidden] { display: none; }
+
+/* ---------- Page en ligne : mot de passe ---------- */
+.verrou { display: flex; flex-direction: column; gap: 12px; max-width: 420px; margin: 24px auto; padding: 16px; background: var(--carte); border: 1px solid var(--bordure); border-radius: 12px; }
+.verrou input[type="password"] { min-height: 48px; padding: 0 12px; border: 1px solid var(--bordure); border-radius: 8px; background: var(--fond); color: var(--texte); font: inherit; }
+.verrou-souvenir { display: flex; align-items: center; gap: 8px; }
+.verrou-souvenir input { width: 22px; height: 22px; }
