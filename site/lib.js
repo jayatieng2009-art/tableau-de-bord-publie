@@ -481,3 +481,12 @@ const MESSAGES_GITHUB = {
 export function messageErreurGithub(statut) {
   return Object.hasOwn(MESSAGES_GITHUB, statut) ? MESSAGES_GITHUB[statut] : "GitHub n'a pas pris l'ordre en compte : réessaie dans un moment.";
 }
+
+// La clé GitHub des ordres : celle que le tableau fournit avec les données chiffrées (rien à recopier sur le téléphone), sinon celle
+// enregistrée sur l'appareil. Une clé de mauvaise forme n'est jamais utilisée.
+export function choisirCleGithub(charge, stockee) {
+  const fournie = charge && typeof charge === "object" ? charge.cle_github : null;
+  if (cleGithubValide(fournie)) return { cle: fournie, origine: "donnees" };
+  if (cleGithubValide(stockee)) return { cle: stockee, origine: "appareil" };
+  return null;
+}

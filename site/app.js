@@ -7,7 +7,7 @@ import {
   actionAffichee, attenteTerminee, messageApresConfirmation,
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, metaCarte, trierAlertes,
   jourParis, formaterMontant, construireAgenda, tachesDuTableau, lienGumroad, lienTiktok,
-  rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub,
+  rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -560,6 +560,12 @@ async function lireOrdresEnAttenteGithub() {
 
 // Où mettre la clé GitHub : un champ, enregistré dans ce navigateur seulement.
 function sectionCleGithub() {
+  const choix = choixCleGithub();
+  if (choix && choix.origine === "donnees") {
+    return sectionFp("Boutons ✅ / ❌ activés (clé fournie par le tableau)", false, el("p", "discret",
+      "La clé GitHub des ordres arrive avec les données chiffrées : rien à saisir sur cet appareil. "
+      + "Pour la retirer, supprime son fichier sur le PC (cle_github_ordres.txt) et révoque-la sur github.com."));
+  }
   const active = Boolean(lireJetonGithub());
   const retour = el("p", "cmd-message");
   retour.setAttribute("role", "status");
@@ -1408,7 +1414,9 @@ function oublierStockage(cle) {
   }
 }
 
-const lireJetonGithub = () => (EN_LIGNE ? lireStockage(CLE_JETON_GITHUB) : null);
+// La clé GitHub des ordres : fournie avec les données chiffrées si le tableau en a une, sinon celle enregistrée sur cet appareil.
+const choixCleGithub = () => (EN_LIGNE ? choisirCleGithub(chargeEnLigne, lireStockage(CLE_JETON_GITHUB)) : null);
+const lireJetonGithub = () => { const choix = choixCleGithub(); return choix ? choix.cle : null; };
 
 // Le formulaire du mot de passe ; la promesse rend { valeur, souvenir } quand on valide.
 function demanderMotDePasse(erreurAffichee) {
