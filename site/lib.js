@@ -276,6 +276,67 @@ export function metaCarte(carte) {
   ].filter(Boolean).join(" · ");
 }
 
+// « Fin dans 3 jours » : ce qu'il reste avant la fin du concours, en jours civils à Paris (comme le planning).
+// `fin` est une date « 2026-11-30 » ; `urgent` à moins de 4 jours ; `termine` une fois la date passée.
+export function libelleFin(fin, maintenant) {
+  const inconnu = { texte: "Fin non précisée", urgent: false, termine: false };
+  const trouve = typeof fin === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(fin) : null;
+  if (!trouve) return inconnu;
+  const [annee, mois, jour] = [Number(trouve[1]), Number(trouve[2]), Number(trouve[3])];
+  const date = new Date(Date.UTC(annee, mois - 1, jour));
+  if (date.getUTCFullYear() !== annee || date.getUTCMonth() !== mois - 1 || date.getUTCDate() !== jour) return inconnu;
+  const [a, m, j] = jourParis(maintenant).split("-").map(Number);
+  const jours = Math.round((date.getTime() - Date.UTC(a, m - 1, j)) / JOUR);
+  if (jours < 0) return { texte: "Terminé", urgent: false, termine: true };
+  const texte = jours === 0 ? "Fin aujourd'hui" : jours === 1 ? "Fin demain" : jours < 60 ? `Fin dans ${jours} jours` : `Fin dans ${Math.round(jours / 30)} mois`;
+  return { texte, urgent: jours <= 3, termine: false };
+}
+
+const EMOJI = /\p{Extended_Pictographic}/u;
+const EMOJIS = /\p{Extended_Pictographic}️?/gu;
+const PREFIXE_TITRE = /^(?:à gagner|gagne[rz]?)\s*:?\s*/i;
+const TITRE_CONCOURS_MAX = 90;
+const chaineNette = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+// Ce que la carte d'un concours montre en grand : l'emoji, le lot, « YouTube · France », le temps qu'il reste. Ne plante jamais.
+export function presenterConcours(carte, maintenant) {
+  const c = objetSur(carte);
+  const titreBrut = chaineNette(c.titre);
+  const emoji = titreBrut && EMOJI.test(titreBrut) ? titreBrut.match(EMOJI)[0] : "🎁";
+  let titre = chaineNette(c.lot);
+  if (!titre && titreBrut) titre = chaineNette(titreBrut.replace(EMOJIS, "").trim().replace(PREFIXE_TITRE, ""));
+  if (titre) {
+    const premier = titre.split(/\s+/)[0];
+    if (premier === premier.toLowerCase()) titre = titre.charAt(0).toUpperCase() + titre.slice(1); // « switch 2 » -> « Switch 2 », mais « iPhone » reste « iPhone »
+    const lettres = Array.from(titre);
+    if (lettres.length > TITRE_CONCOURS_MAX) titre = `${lettres.slice(0, TITRE_CONCOURS_MAX - 1).join("")}…`;
+  }
+  const pays = chaineNette(c.pays);
+  const ligne = [chaineNette(c.plateforme), pays && !/^non pr[ée]cis/i.test(pays) ? pays : null].filter(Boolean).join(" · ");
+  return { emoji, titre: titre ?? "(sans titre)", ligne, fin: libelleFin(c.fin, maintenant) };
+}
+
+// Les concours à décider, dans l'ordre où on les montre un par un : meilleurs scores d'abord, les terminés en dernier,
+// ceux qu'on a reportés tout au bout (dans l'ordre du report). Sont écartés : sans code, déjà acceptés, ordre déjà donné, `masques`.
+export function pileDeConcours(cartes, options = {}) {
+  if (!Array.isArray(cartes)) return [];
+  const maintenant = options.maintenant instanceof Date ? options.maintenant : new Date();
+  const masques = options.masques instanceof Set ? options.masques : new Set();
+  const reportes = Array.isArray(options.reportes) ? options.reportes : [];
+  const termine = (c) => (libelleFin(c.fin, maintenant).termine ? 1 : 0);
+  const score = (c) => (estNombre(c.score) ? c.score : -Infinity);
+  const ordonnees = cartes
+    .filter((c) => c && typeof c === "object" && typeof c.code === "string" && c.approuve !== true && c.ordre !== "ok" && c.ordre !== "no" && !masques.has(c.code))
+    .map((c, i) => ({ c, i }))
+    .sort((x, y) => (termine(x.c) - termine(y.c)) || (score(y.c) - score(x.c)) || (x.i - y.i))
+    .map((x) => x.c);
+  const rang = new Map(reportes.map((code, i) => [code, i]));
+  return [
+    ...ordonnees.filter((c) => !rang.has(c.code)),
+    ...ordonnees.filter((c) => rang.has(c.code)).sort((a, b) => rang.get(a.code) - rang.get(b.code)),
+  ];
+}
+
 const RANG_ALERTE = { erreur: 0, avertissement: 1, action: 2, info: 3 };
 
 // Alertes et tâches rangées de la plus grave à la moins grave ; niveau inconnu = info ; texte vide ou trop long nettoyé.
@@ -339,24 +400,120 @@ const TEXTES_GUMROAD = {
 
 const NOM_COURT = { "bot-concours": "Concours", "produits-numeriques": "Produits", tiktok: "TikTok", gumroad: "Gumroad", "falling-pickaxe": "Live" };
 
-// Tout ce qu'il reste à faire ou à surveiller, de tous les projets, du plus grave au moins grave.
-export function tachesDuTableau(projets) {
+// Les tâches de tous les projets, avec le nom court du projet à part ; pas encore triées.
+function tachesAvecSource(projets) {
   if (!Array.isArray(projets)) return [];
   const taches = [];
   for (const p of projets) {
     if (!p || typeof p !== "object") continue;
     const nom = Object.hasOwn(NOM_COURT, p.adaptateur) ? NOM_COURT[p.adaptateur] : typeof p.nom === "string" ? p.nom : "Projet";
     const d = objetSur(p.details);
-    for (const a of listeSure(d.a_faire)) taches.push({ niveau: a.niveau, texte: `${nom} : ${typeof a.texte === "string" ? a.texte : ""}` });
+    for (const a of listeSure(d.a_faire)) taches.push({ nom, niveau: a.niveau, texte: typeof a.texte === "string" ? a.texte : "" });
     for (const texte of Array.isArray(d.avertissements) ? d.avertissements : []) {
-      if (typeof texte === "string") taches.push({ niveau: "avertissement", texte: `${nom} : ${texte}` });
+      if (typeof texte === "string") taches.push({ nom, niveau: "avertissement", texte });
     }
     if (p.adaptateur === "gumroad" && Object.hasOwn(TEXTES_GUMROAD, d.etat)) {
       const [niveau, texte] = TEXTES_GUMROAD[d.etat];
-      taches.push({ niveau, texte: `${nom} : ${texte}` });
+      taches.push({ nom, niveau, texte });
     }
   }
-  return trierAlertes(taches);
+  return taches;
+}
+
+// Tout ce qu'il reste à faire ou à surveiller, de tous les projets, du plus grave au moins grave.
+export function tachesDuTableau(projets) {
+  return trierAlertes(tachesAvecSource(projets).map((t) => ({ niveau: t.niveau, texte: `${t.nom} : ${t.texte}` })));
+}
+
+const ONGLET_DE_TACHE = { Concours: "concours", Produits: "boutique", Gumroad: "boutique", TikTok: "tiktok", Live: "live" };
+const NOM_DU_GROUPE = { concours: "Concours", boutique: "Boutique", tiktok: "TikTok", live: "Live" };
+const TACHE_COURTE_MAX = 110;
+
+// Les tâches à faire ou à surveiller, une ligne par thème (nombre + la plus grave) : l'accueil n'affiche pas vingt phrases.
+// `cible` est l'onglet qui détaille le thème (null pour un projet inconnu). Les simples rappels sont laissés aux onglets.
+export function groupesDeTaches(projets) {
+  const triees = tachesAvecSource(projets)
+    .filter((t) => typeof t.texte === "string" && t.texte.trim())
+    .map((t) => ({ nom: t.nom, niveau: Object.hasOwn(RANG_ALERTE, t.niveau) ? t.niveau : "info", texte: t.texte.trim() }))
+    .filter((t) => t.niveau !== "info")
+    .sort((a, b) => RANG_ALERTE[a.niveau] - RANG_ALERTE[b.niveau]);
+  const groupes = new Map();
+  for (const t of triees) {
+    const cible = Object.hasOwn(ONGLET_DE_TACHE, t.nom) ? ONGLET_DE_TACHE[t.nom] : null;
+    const cle = cible ?? t.nom;
+    const existant = groupes.get(cle);
+    if (existant) {
+      existant.nb += 1;
+      continue;
+    }
+    const lettres = Array.from(t.texte);
+    groupes.set(cle, {
+      nom: cible ? NOM_DU_GROUPE[cible] : t.nom, nb: 1, niveau: t.niveau, cible,
+      texte: lettres.length > TACHE_COURTE_MAX ? `${lettres.slice(0, TACHE_COURTE_MAX - 1).join("")}…` : t.texte,
+    });
+  }
+  return [...groupes.values()].map(({ nom, nb, niveau, texte, cible }) => ({ nom, nb, niveau, texte, cible }));
+}
+
+// Les gros chiffres de l'accueil : concours à décider, abonnés de tous les réseaux, revenu, direct. Une tuile seulement si la donnée existe.
+export function tuilesAccueil(projets, revenus) {
+  const liste = Array.isArray(projets) ? projets.filter((p) => p && typeof p === "object") : [];
+  const details = (adaptateur) => liste.filter((p) => p.adaptateur === adaptateur).map((p) => objetSur(p.details));
+  const tuiles = [];
+
+  const bot = details("bot-concours")[0];
+  if (bot) {
+    const c = objetSur(bot.compteurs);
+    if (estNombre(c.cartes) && estNombre(c.acceptees)) {
+      tuiles.push({
+        id: "concours", ton: "accent", valeur: formaterNombre(Math.max(0, c.cartes - c.acceptees)), libelle: "concours à décider",
+        detail: estNombre(c.publies_7j) ? `${formaterNombre(c.publies_7j)} publié${c.publies_7j > 1 ? "s" : ""} cette semaine` : "", cible: "concours",
+      });
+    }
+  }
+
+  const reseaux = [];
+  const abonnesTiktok = details("tiktok").flatMap((d) => listeSure(d.comptes)).map((c) => c.abonnes).filter(estNombre);
+  if (abonnesTiktok.length > 0) reseaux.push(["TikTok", abonnesTiktok.reduce((a, b) => a + b, 0)]);
+  const abonnesTelegram = details("bot-concours").map((d) => objetSur(d.canal).abonnes).find(estNombre);
+  if (estNombre(abonnesTelegram)) reseaux.push(["Telegram", abonnesTelegram]);
+  const abonnesYoutube = details("falling-pickaxe").map((d) => objetSur(d.chaine).abonnes).find(estNombre);
+  if (estNombre(abonnesYoutube)) reseaux.push(["YouTube", abonnesYoutube]);
+  if (reseaux.length > 0) {
+    tuiles.push({
+      id: "abonnes", ton: "success", valeur: formaterNombre(reseaux.reduce((somme, [, n]) => somme + n, 0)), libelle: "abonnés, tous réseaux",
+      detail: reseaux.map(([nom, n]) => `${nom} ${formaterNombre(n)}`).join(" · "), cible: "tiktok",
+    });
+  }
+
+  const saisi = objetSur(revenus).total_cents;
+  const saisiPositif = Number.isInteger(saisi) && saisi > 0 ? saisi : null;
+  const gumroad = details("gumroad")[0];
+  if (gumroad) {
+    if (gumroad.etat === "ok") {
+      const ventes = estNombre(gumroad.total_ventes) ? `${formaterNombre(gumroad.total_ventes)} vente${gumroad.total_ventes > 1 ? "s" : ""}` : null;
+      tuiles.push({
+        id: "revenu", ton: "warning", valeur: formaterMontant(gumroad.total_usd_cents, "$"), libelle: "revenu de la boutique",
+        detail: [ventes, saisiPositif ? `+ ${formaterMontant(saisiPositif, "€")} saisis à la main` : null].filter(Boolean).join(" · "), cible: "boutique",
+      });
+    } else {
+      const raison = gumroad.etat === "a-configurer" || gumroad.etat === "jeton-invalide" ? "jeton à poser" : gumroad.etat === "refuse" ? "jeton refusé" : "ventes indisponibles";
+      tuiles.push({ id: "revenu", ton: "warning", valeur: "?", libelle: "revenu de la boutique", detail: raison, cible: "boutique" });
+    }
+  } else if (saisiPositif) {
+    tuiles.push({ id: "revenu", ton: "warning", valeur: formaterMontant(saisiPositif, "€"), libelle: "revenu saisi à la main", detail: "", cible: "boutique" });
+  }
+
+  const direct = details("falling-pickaxe")[0];
+  if (direct && typeof objetSur(direct.live).en_cours === "boolean") {
+    const enCours = direct.live.en_cours;
+    const abonnes = objetSur(direct.chaine).abonnes;
+    tuiles.push({
+      id: "live", ton: enCours ? "danger" : "neutre", valeur: enCours ? "En direct" : "Hors ligne", libelle: "Falling Pickaxe",
+      detail: estNombre(abonnes) ? `${formaterNombre(abonnes)} abonnés` : "", cible: "live",
+    });
+  }
+  return tuiles;
 }
 
 // Liens venus de l'API Gumroad et des exports TikTok : seulement leurs propres domaines, en https, sans identifiants ni port.
@@ -377,18 +534,17 @@ export const lienTiktok = (url) => lienDuDomaine(url, (h) => h === "tiktok.com" 
 // ---------- Onglets : la page ne montre qu'un thème à la fois (moins de défilement sur téléphone) ----------
 
 export const ONGLETS = [
-  { id: "resume", titre: "Résumé" },
+  { id: "resume", titre: "Accueil" },
   { id: "concours", titre: "Concours" },
-  { id: "produits", titre: "Produits" },
+  { id: "boutique", titre: "Boutique" },
   { id: "tiktok", titre: "TikTok" },
-  { id: "argent", titre: "Argent" },
   { id: "live", titre: "Live" },
   { id: "autres", titre: "Autres" },
 ];
-const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "produits", tiktok: "tiktok", gumroad: "argent", "falling-pickaxe": "live" };
+const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "boutique", gumroad: "boutique", tiktok: "tiktok", "falling-pickaxe": "live" };
 
-// Les projets rangés par onglet, dans l'ordre fixe de ONGLETS ; un onglet sans projet n'existe pas, sauf « Résumé » et ceux
-// demandés en plus (ex. « argent » pour le carnet de revenus, qui n'est pas un projet).
+// Les projets rangés par onglet, dans l'ordre fixe de ONGLETS ; un onglet sans projet n'existe pas, sauf « Accueil » et ceux
+// demandés en plus (ex. « boutique » pour le carnet de revenus, qui n'est pas un projet).
 export function rangerEnOnglets(projets, extras = []) {
   const par = new Map(ONGLETS.map((o) => [o.id, []]));
   for (const p of Array.isArray(projets) ? projets : []) {
@@ -416,12 +572,12 @@ export function pastilleOnglet(id, projets) {
     }, 0);
     return n > 0 ? { texte: String(n), niveau: "info" } : null;
   }
-  if (id === "produits") {
+  if (id === "boutique") {
     const n = de("produits-numeriques").reduce((somme, d) => somme + (estNombre(objetSur(d.compteurs).en_retard) ? Math.max(0, d.compteurs.en_retard) : 0), 0);
-    return n > 0 ? { texte: String(n), niveau: "attention" } : null;
+    if (n > 0) return { texte: String(n), niveau: "attention" };
+    return de("gumroad").some((d) => d.etat !== "ok") ? { texte: "!", niveau: "attention" } : null;
   }
   if (id === "live") return de("falling-pickaxe").some((d) => objetSur(d.live).en_cours === true) ? { texte: "●", niveau: "ok" } : null;
-  if (id === "argent") return de("gumroad").some((d) => d.etat !== "ok") ? { texte: "!", niveau: "attention" } : null;
   if (id === "tiktok") return de("tiktok").some((d) => listeSure(d.comptes).length === 0) ? { texte: "!", niveau: "attention" } : null;
   return null;
 }

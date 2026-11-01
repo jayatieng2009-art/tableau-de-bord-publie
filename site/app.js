@@ -5,8 +5,8 @@ import {
   formaterNombre, variation, pourcentageQuota, alertesFalling, pointsCourbe,
   lienSur, lienVideo, lienAnalytiquesVideo, lienAnalytiquesChaine, lienStudio, lienChaine, lienDirect,
   actionAffichee, attenteTerminee, messageApresConfirmation,
-  lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, metaCarte, trierAlertes,
-  jourParis, formaterMontant, construireAgenda, tachesDuTableau, lienGumroad, lienTiktok,
+  lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
+  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
@@ -360,19 +360,22 @@ function carteFallingPickaxe(projet, maintenant) {
   carte.append(entete);
 
   // En direct : l'adresse stable de la chaîne ; sinon (ou sans identifiant de chaîne) le direct du dernier bilan,
-  // dont l'adresse peut dater (elle n'est mise à jour que le soir).
+  // dont l'adresse peut dater (elle n'est mise à jour que le soir). Les autres liens se rangent dans une section repliée.
   const lienDuLive = live.en_cours ? lien("Ouvrir le direct", lienDirect(chaineId), "lien lien-principal") : null;
-  carte.append(groupeDeLiens(
+  const lienPrincipal = lienDuLive || lien("Direct du dernier bilan", lienSur(live.url));
+  if (lienPrincipal) carte.append(groupeDeLiens("fp-acces", lienPrincipal));
+  const liensChaine = groupeDeLiens(
     "fp-acces",
-    lienDuLive || lien("Direct du dernier bilan", lienSur(live.url)),
     lien("Salle de contrôle du direct", lienStudio(chaineId, "live")),
     lien("Analytiques de la chaîne", lienAnalytiquesChaine(chaineId)),
     lien("Contenu (Studio)", lienStudio(chaineId, "content")),
     lien("Page de la chaîne", lienChaine(chaineId)),
-  ));
+  );
 
-  for (const alerte of alertesFalling(d, maintenant)) {
-    carte.append(el("p", `alerte alerte-${alerte.niveau}`, alerte.texte));
+  const alertesLive = alertesFalling(d, maintenant);
+  for (const alerte of alertesLive.slice(0, 2)) carte.append(el("p", `alerte alerte-${alerte.niveau}`, alerte.texte));
+  if (alertesLive.length > 2) {
+    carte.append(sectionFp(`Voir les ${alertesLive.length - 2} autres alertes`, false, ...alertesLive.slice(2).map((a) => el("p", `alerte alerte-${a.niveau}`, a.texte))));
   }
 
   const zoneCommandes = el("section", "fp-commandes");
@@ -396,11 +399,11 @@ function carteFallingPickaxe(projet, maintenant) {
   if (estPerime(chaine.maj_chiffres, maintenant, HEURES_STATISTIQUES_PERIMEES)) {
     ages.append(" ", el("span", "badge-perime", "Périmé"));
   }
-  carte.append(ages);
-
   const courbes = el("div", "fp-courbes");
   courbes.append(blocCourbe("Abonnés", courbe, "abonnes"), blocCourbe("Vues", courbe, "vues"));
-  carte.append(courbes);
+  if (estPerime(chaine.maj_chiffres, maintenant, HEURES_STATISTIQUES_PERIMEES)) {
+    carte.append(el("p", "alerte alerte-avertissement", `Les chiffres de la chaîne datent de plus de ${HEURES_STATISTIQUES_PERIMEES} h : ne vous y fiez pas.`));
+  }
 
   const aVenir = videos
     .filter((v) => v.programme === true && Date.parse(v.publie_pour) > maintenant.getTime())
