@@ -665,3 +665,51 @@ export function choisirCleGithub(charge, stockee) {
   if (cleGithubValide(stockee)) return { cle: stockee, origine: "appareil" };
   return null;
 }
+
+// ---------- Commandes du live depuis la page en ligne (l'ordre part à GitHub, le PC l'exécute dans la minute) ----------
+
+const RAPPEL_PC_ALLUME = " Le PC doit être allumé : un ordre qu'il n'exécute pas dans les 10 minutes est ignoré.";
+const COMMANDES_LIVE = {
+  couper: {
+    libelle: "Couper le live", danger: true,
+    avertissement: "Arrête le live, OBS et le surveillant (préparation et publication des Shorts) jusqu'au prochain démarrage (14 h ou ouverture de session). "
+      + `Refusé si le live a démarré il y a moins de 10 minutes.${RAPPEL_PC_ALLUME}`,
+  },
+  lancer: {
+    libelle: "Lancer le live", danger: false,
+    avertissement: `Démarre le serveur du jeu, OBS et le direct YouTube : comptez 1 à 3 minutes.${RAPPEL_PC_ALLUME}`,
+  },
+};
+
+// La commande à proposer d'après l'état connu du direct : couper s'il tourne, lancer s'il est arrêté, rien si on ne sait pas.
+// (Le PC revérifie l'état réel avant d'agir : un relevé un peu ancien ne peut pas faire de dégât.)
+export function commandeLiveEnLigne(enCours) {
+  if (typeof enCours !== "boolean") return null;
+  const action = enCours ? "couper" : "lancer";
+  return { action, ...COMMANDES_LIVE[action] };
+}
+
+// Le titre exact du ticket que le PC attend (voir ordres_live_github.py) ; null pour toute autre action.
+export function titreOrdreLive(action) {
+  return action === "couper" || action === "lancer" ? `live_${action}` : null;
+}
+
+// Les ordres du live déjà donnés et pas encore exécutés : « couper » et / ou « lancer », d'après les titres des tickets ouverts.
+export function actionsLiveEnAttente(tickets) {
+  if (!Array.isArray(tickets)) return [];
+  const actions = [];
+  for (const t of tickets) {
+    const trouve = t && typeof t.title === "string" ? /^live_(couper|lancer)$/.exec(t.title) : null;
+    if (trouve && !actions.includes(trouve[1])) actions.push(trouve[1]);
+  }
+  return actions;
+}
+
+// Ce que le PC a répondu dans le ticket : le dernier commentaire écrit par le propriétaire du dépôt (200 caractères au plus) ; null sinon.
+export function reponseDuPc(commentaires, proprietaire) {
+  if (!Array.isArray(commentaires) || typeof proprietaire !== "string") return null;
+  const siens = commentaires.filter((c) => c && typeof c === "object" && c.user && typeof c.user.login === "string"
+    && c.user.login.toLowerCase() === proprietaire.toLowerCase() && typeof c.body === "string" && c.body.trim());
+  if (siens.length === 0) return null;
+  return Array.from(siens[siens.length - 1].body.trim()).slice(0, 200).join("");
+}

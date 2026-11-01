@@ -6,7 +6,7 @@ import {
   lienSur, lienVideo, lienAnalytiquesVideo, lienAnalytiquesChaine, lienStudio, lienChaine, lienDirect,
   actionAffichee, attenteTerminee, messageApresConfirmation,
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
-  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, estRappelDeDecision, nomCourtProduit, abreger, lienGumroad, lienTiktok,
+  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, estRappelDeDecision, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
@@ -323,7 +323,119 @@ function dessinerCommandes(zone, etat, actions) {
   }
 }
 
-async function initialiserCommandes(zone, projetId) {
+let liveEnAttente = new Set(); // « couper » / « lancer » : ordres du live déjà donnés (tickets ouverts), relus à chaque affichage
+const DELAI_SUIVI_ORDRE_MS = 5000;
+const DUREE_SUIVI_ORDRE_MS = 150000;
+
+// Attend la réponse du PC (ticket fermé avec un commentaire), 2 min 30 au plus ; rend son texte, ou null si le PC n'a pas répondu.
+async function attendreReponseDuPc(numero) {
+  const jeton = lireJetonGithub();
+  if (!jeton || !depotConcours || !Number.isInteger(numero)) return null;
+  const base = `https://api.github.com/repos/${depotConcours}/issues/${numero}`;
+  const debut = Date.now();
+  while (Date.now() - debut < DUREE_SUIVI_ORDRE_MS) {
+    await pause(DELAI_SUIVI_ORDRE_MS);
+    try {
+      const ticket = await fetch(base, { headers: enTetesGithub(jeton), cache: "no-store" });
+      if (!ticket.ok) return null;
+      if ((await ticket.json()).state !== "closed") continue;
+      const commentaires = await fetch(`${base}/comments?per_page=10`, { headers: enTetesGithub(jeton), cache: "no-store" });
+      return commentaires.ok ? reponseDuPc(await commentaires.json(), depotConcours.split("/")[0]) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Commandes du live sur la page en ligne : le bouton, la confirmation de 30 s, l'ordre part à GitHub, le PC (allumé) l'exécute dans la minute.
+function dessinerCommandesEnLigne(zone, enCours, maintenant) {
+  const commande = commandeLiveEnLigne(enCours);
+  const entete = el("div", "fp-entete");
+  entete.append(el("strong", "", "Commandes"), el("span", "badge-compteur", "En ligne, via GitHub"));
+  const message = el("p", "cmd-message");
+  message.setAttribute("role", "status");
+  if (dernierResultat) {
+    ecrireMessage(message, dernierResultat.texte, dernierResultat.reussi ? "ok" : "erreur");
+    dernierResultat = null;
+  }
+  const emplacement = el("div", "cmd-emplacement");
+  zone.replaceChildren(entete, message, emplacement);
+  const genere = chargeEnLigne && chargeEnLigne.paquet ? chargeEnLigne.paquet.genere_a : null;
+  emplacement.append(el("p", "discret", `Le PC (allumé) exécute l'ordre dans la minute. État du direct d'après le relevé ${genere ? ageLisible(genere, maintenant) : "(date inconnue)"}.`));
+  if (liveEnAttente.size > 0) {
+    emplacement.append(el("p", "alerte alerte-avertissement", `Ordre déjà donné (${[...liveEnAttente].join(", ")}) : le PC l'exécute dans la minute.`));
+    return;
+  }
+  if (!commande) {
+    emplacement.append(el("p", "discret", "L'état du direct est inconnu : commandes désactivées."));
+    return;
+  }
+  const principal = bouton(commande.libelle, commande.danger ? "bouton-danger" : "bouton-principal", demander);
+  emplacement.append(principal);
+
+  function demander() {
+    principal.disabled = true;
+    let restant = 30;
+    const compte = el("p", "discret cmd-compte", `Expire dans ${restant} s`);
+    const panneau = el("div", "cmd-confirmation");
+    confirmationsOuvertes += 1;
+    let ferme = false;
+    const fermer = () => {
+      if (ferme) return;
+      ferme = true;
+      confirmationsOuvertes -= 1;
+      clearInterval(minuteur);
+      panneau.remove();
+    };
+    const minuteur = setInterval(() => {
+      restant -= 1;
+      if (restant <= 0) {
+        fermer();
+        principal.disabled = false;
+        ecrireMessage(message, "Confirmation expirée : recommencez.", "erreur");
+      } else {
+        compte.textContent = `Expire dans ${restant} s`;
+      }
+    }, 1000);
+    const confirmer = bouton("Confirmer", "bouton-danger", async () => {
+      confirmer.disabled = true;
+      const reponse = await envoyerOrdreLive(commande.action);
+      fermer();
+      if (!reponse.ok) {
+        ecrireMessage(message, reponse.json && reponse.json.erreur ? reponse.json.erreur : "Commande impossible.", "erreur");
+        principal.disabled = false;
+        return;
+      }
+      liveEnAttente.add(commande.action);
+      emplacement.replaceChildren(el("p", "alerte alerte-avertissement", "Ordre envoyé : le PC l'exécute dans la minute."));
+      ecrireMessage(message, "J'attends la réponse du PC…", "info");
+      const texte = await attendreReponseDuPc(reponse.json.numero);
+      dernierResultat = texte
+        ? { texte, reussi: /^Exécuté/.test(texte) }
+        : { texte: "Pas de réponse du PC pour l'instant (est-il allumé ?). Sans réponse dans les 10 minutes, l'ordre sera ignoré.", reussi: false };
+      await charger();
+    });
+    const annuler = bouton("Annuler", "bouton-secondaire", () => {
+      fermer();
+      principal.disabled = false;
+      ecrireMessage(message, "Annulé.", "info");
+    });
+    panneau.setAttribute("role", "group");
+    panneau.setAttribute("aria-label", "Confirmation");
+    panneau.append(el("p", "cmd-titre", `${commande.libelle} ?`), el("p", "cmd-avertissement", commande.avertissement), compte, groupeDeLiens("cmd-actions", confirmer, annuler));
+    emplacement.append(panneau);
+  }
+}
+
+async function initialiserCommandes(zone, projetId, enCours) {
+  if (EN_LIGNE) {
+    // Pas de serveur en ligne : il faut la clé GitHub des ordres (sans elle, rien à montrer).
+    if (!decisionsDisponibles || !depotConcours) return;
+    zone.hidden = false;
+    dessinerCommandesEnLigne(zone, enCours, new Date());
+    return;
+  }
   const etat = await lireEtatActions();
   if (!etat || !Array.isArray(etat.actions)) return; // page publique ou serveur sans commandes : rien à afficher
   const actions = etat.actions.filter((a) => a && typeof a === "object" && a.projet === projetId);
@@ -371,7 +483,7 @@ function carteFallingPickaxe(projet, maintenant) {
   const zoneCommandes = el("section", "fp-commandes");
   zoneCommandes.hidden = true; // montrée seulement si le serveur privé propose des commandes
   carte.append(zoneCommandes);
-  initialiserCommandes(zoneCommandes, projet.id).catch(() => {});
+  initialiserCommandes(zoneCommandes, projet.id, live.en_cours).catch(() => {});
 
   const chiffres = el("div", "grosses-tuiles");
   const depuisBilan = (valeur, precedent) => {
@@ -539,30 +651,46 @@ function demandeEnLigne(c, action) {
   };
 }
 
-// { ok, json } comme la réponse du serveur privé, pour que la même interface serve aux deux.
-async function envoyerOrdreGithub(action, code) {
+// Crée le ticket d'un ordre (le bot ou le PC le lira) ; { ok, json } comme la réponse du serveur privé, pour que la même interface serve aux deux.
+// Pas de doublon : si un ticket ouvert porte l'un des titres de `enConflit`, l'ordre est refusé avec `messageDoublon`.
+async function creerTicketGithub(titre, enConflit, messageDoublon) {
   const jeton = lireJetonGithub();
   if (!jeton) return { ok: false, json: { erreur: "Aucune clé GitHub n'est enregistrée sur cet appareil." } };
   if (!depotConcours) return { ok: false, json: { erreur: "Le dépôt du bot est inconnu : actualise la page." } };
-  if ((action !== "ok" && action !== "no") || !/^[0-9a-f]{10}$/.test(code)) return { ok: false, json: { erreur: "Décision invalide." } };
   const base = `https://api.github.com/repos/${depotConcours}/issues`;
   try {
-    // Pas de doublon : un ordre déjà en attente pour cette carte est refusé.
     const liste = await fetch(`${base}?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
     if (!liste.ok) return { ok: false, json: { erreur: messageErreurGithub(liste.status) } };
     const tickets = await liste.json();
-    if (Array.isArray(tickets) && tickets.some((t) => t && (t.title === `ok_${code}` || t.title === `no_${code}`))) {
-      return { ok: false, json: { erreur: "Un ordre est déjà en attente pour cette carte : le bot l'applique à son prochain passage." } };
-    }
+    if (Array.isArray(tickets) && tickets.some((t) => t && enConflit.includes(t.title))) return { ok: false, json: { erreur: messageDoublon } };
     const reponse = await fetch(base, {
       method: "POST", headers: { ...enTetesGithub(jeton), "Content-Type": "application/json" },
-      body: JSON.stringify({ title: `${action}_${code}`, body: "Ordre donné depuis la page en ligne du tableau de bord." }),
+      body: JSON.stringify({ title: titre, body: "Ordre donné depuis la page en ligne du tableau de bord." }),
     });
-    if (reponse.status === 201) return { ok: true, json: { statut: "envoye", action, code } };
-    return { ok: false, json: { erreur: messageErreurGithub(reponse.status) } };
+    if (reponse.status !== 201) return { ok: false, json: { erreur: messageErreurGithub(reponse.status) } };
+    let numero = null;
+    try {
+      numero = (await reponse.json()).number;
+    } catch {
+      // le numéro sert seulement à suivre la réponse du PC
+    }
+    return { ok: true, json: { statut: "envoye", numero } };
   } catch {
     return { ok: false, json: { erreur: "GitHub est injoignable : réessaie dans un moment." } };
   }
+}
+
+async function envoyerOrdreGithub(action, code) {
+  if ((action !== "ok" && action !== "no") || !/^[0-9a-f]{10}$/.test(code)) return { ok: false, json: { erreur: "Décision invalide." } };
+  return creerTicketGithub(`${action}_${code}`, [`ok_${code}`, `no_${code}`],
+    "Un ordre est déjà en attente pour cette carte : le bot l'applique à son prochain passage.");
+}
+
+async function envoyerOrdreLive(action) {
+  const titre = titreOrdreLive(action);
+  if (titre === null) return { ok: false, json: { erreur: "Commande invalide." } };
+  return creerTicketGithub(titre, ["live_couper", "live_lancer"],
+    "Un ordre du live est déjà en attente : le PC l'exécute dans la minute (il doit être allumé).");
 }
 
 // Les ordres déjà donnés et pas encore appliqués (tickets ouverts) : les cartes concernées l'indiquent, même après un rechargement.
@@ -573,6 +701,7 @@ async function lireOrdresEnAttenteGithub() {
     const reponse = await fetch(`https://api.github.com/repos/${depotConcours}/issues?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
     if (!reponse.ok) return;
     const tickets = await reponse.json();
+    liveEnAttente = new Set(actionsLiveEnAttente(tickets));
     for (const t of Array.isArray(tickets) ? tickets : []) {
       const trouve = t && typeof t.title === "string" ? /^(ok|no)_([0-9a-f]{10})$/.exec(t.title) : null;
       if (trouve) ordresEnvoyes.set(trouve[2], trouve[1]);
