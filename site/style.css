@@ -12,10 +12,18 @@
   --alerte-texte: #6b4400;
   --erreur-fond: #fde4e2;
   --erreur-texte: #7a1a14;
+  --accent-fond: #e4ebfb;
+  --accent-fort: #1a3f9c;
+  --neutre-fond: #eceff4;
+  --neutre-texte: #3b4557;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --accent-fond: #1d2a4d;
+    --accent-fort: #aac2ff;
+    --neutre-fond: #262c38;
+    --neutre-texte: #c7cedb;
     --fond: #12151b;
     --carte: #1b2029;
     --texte: #e8ebf1;
@@ -44,7 +52,7 @@ body {
 main {
   max-width: 960px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 16px 16px calc(96px + env(safe-area-inset-bottom)); /* de la place pour la barre du bas */
 }
 
 h1 { font-size: 1.5rem; margin: 0; }
@@ -59,7 +67,7 @@ h3 { font-size: 1rem; margin: 0; overflow-wrap: anywhere; }
 #message { margin: 12px 0; min-height: 1.5em; font-weight: 600; }
 #message[data-type="erreur"] { color: var(--erreur-texte); background: var(--erreur-fond); padding: 8px 12px; border-radius: 8px; }
 #message[data-type="info"] { color: var(--discret); }
-#message:empty { padding: 0; background: none; }
+#message:empty { padding: 0; margin: 0; min-height: 0; background: none; }
 
 .source { margin-bottom: 24px; }
 .source-entete { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 8px; }
@@ -157,6 +165,7 @@ progress { width: 100%; height: 14px; accent-color: var(--accent); }
 .bouton-danger { background: var(--erreur-fond); border-color: var(--erreur-texte); color: var(--erreur-texte); }
 
 .cmd-message { min-height: 1.5em; margin: 8px 0; font-weight: 600; overflow-wrap: anywhere; }
+.cmd-message:empty { min-height: 0; margin: 0; }
 .cmd-message[data-type="ok"] { color: var(--ok-texte); }
 .cmd-message[data-type="erreur"] { color: var(--erreur-texte); }
 .cmd-message[data-type="info"] { color: var(--discret); }
@@ -186,23 +195,86 @@ progress { width: 100%; height: 14px; accent-color: var(--accent); }
 }
 .vue-ensemble .carte { border-color: var(--accent); }
 
-/* ---------- Onglets ---------- */
+/* ---------- Barre du bas : une rubrique à la fois, comme une appli ---------- */
 .onglets {
-  position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; padding: 8px 0;
-  background: var(--fond); border-bottom: 1px solid var(--bordure); scrollbar-width: none;
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); z-index: 20; width: min(100%, 960px);
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px;
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); background: var(--carte); border-top: 1px solid var(--bordure);
 }
-.onglets::-webkit-scrollbar { display: none; }
 .onglet {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
-  border: 1px solid var(--bordure); border-radius: 999px; background: var(--carte); color: var(--texte);
-  font: inherit; font-weight: 600; cursor: pointer;
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 56px; padding: 4px 2px; border: 0; border-radius: 14px; background: transparent; color: var(--discret);
+  font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer;
 }
-.onglet[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
-.pastille { min-width: 22px; padding: 0 6px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 20px; }
+.onglet-icone { font-size: 1.4rem; line-height: 1; }
+.onglet[aria-selected="true"] { background: var(--accent-fond); color: var(--accent-fort); }
+.pastille {
+  position: absolute; top: 2px; left: calc(50% + 6px); min-width: 20px; padding: 0 5px; border-radius: 999px;
+  font-size: 0.6875rem; font-weight: 700; text-align: center; line-height: 18px;
+}
 .pastille-attention { background: var(--alerte-fond); color: var(--alerte-texte); }
-.pastille-info { background: var(--bordure); color: var(--texte); }
+.pastille-info { background: var(--accent-fond); color: var(--accent-fort); }
 .pastille-ok { background: var(--ok-fond); color: var(--ok-texte); }
 .panneau[hidden] { display: none; }
+
+/* ---------- Grosses tuiles colorées (accueil, boutique, TikTok) ---------- */
+.grosses-tuiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
+.grosse-tuile {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 14px; border: 0; border-radius: 16px;
+  text-align: left; font: inherit;
+}
+button.grosse-tuile { cursor: pointer; }
+.gt-icone { font-size: 1.3rem; line-height: 1; }
+.gt-valeur { font-size: 1.9rem; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+.gt-libelle { font-size: 0.875rem; font-weight: 700; }
+.gt-detail { font-size: 0.75rem; font-weight: 500; overflow-wrap: anywhere; }
+.ton-accent { background: var(--accent-fond); color: var(--accent-fort); }
+.ton-success { background: var(--ok-fond); color: var(--ok-texte); }
+.ton-warning { background: var(--alerte-fond); color: var(--alerte-texte); }
+.ton-danger { background: var(--erreur-fond); color: var(--erreur-texte); }
+.ton-neutre { background: var(--neutre-fond); color: var(--neutre-texte); }
+
+/* ---------- Accueil : à faire en premier ---------- */
+.faire-ligne {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 48px; padding: 10px 0;
+  border: 0; border-top: 1px solid var(--bordure); background: transparent; color: var(--texte); font: inherit; text-align: left; cursor: pointer;
+}
+.cmd-titre + .faire-ligne { border-top: 0; }
+.faire-point { flex: 0 0 10px; width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--alerte-texte); }
+.faire-point-erreur { background: var(--erreur-texte); }
+.faire-corps { display: flex; flex-direction: column; min-width: 0; }
+.faire-nom { font-weight: 700; }
+.faire-texte { color: var(--discret); font-size: 0.875rem; overflow-wrap: anywhere; }
+.accueil-rdv { margin: 12px 0 4px; padding-top: 10px; border-top: 1px solid var(--bordure); font-size: 0.9rem; }
+
+/* ---------- Concours : un concours à la fois ---------- */
+.pile { margin: 12px 0; }
+.pile-entete { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.badge-compteur { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--accent-fond); color: var(--accent-fort); font-size: 0.8125rem; font-weight: 700; }
+.pile-carte { padding: 22px 16px; border-radius: 20px; background: var(--accent-fond); color: var(--accent-fort); text-align: center; }
+.pile-emoji { font-size: 3rem; line-height: 1.1; }
+.pile-titre { margin: 6px 0 4px; font-size: 1.35rem; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.pile-ligne { margin: 0; font-size: 0.9rem; font-weight: 600; }
+.pile-fin { display: inline-block; margin-top: 12px; padding: 4px 12px; border-radius: 999px; background: var(--carte); color: var(--texte); font-size: 0.875rem; font-weight: 700; }
+.pile-fin-urgent { background: var(--alerte-fond); color: var(--alerte-texte); }
+.lien-pile { justify-content: center; width: 100%; margin: 10px 0 4px; border: 0; background: transparent; }
+.pile-confirmation { margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; background: var(--ok-fond); color: var(--ok-texte); font-weight: 600; overflow-wrap: anywhere; }
+.pile-passer { display: block; margin: 10px auto 0; }
+.cc-boutons-grands { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.bouton-grand { min-height: 56px; border-radius: 14px; font-size: 1.05rem; }
+.bouton-refuser { background: var(--erreur-fond); border-color: transparent; color: var(--erreur-texte); }
+.bouton-publier { background: var(--ok-fond); border-color: transparent; color: var(--ok-texte); }
+
+/* ---------- Boutique : produits en vignettes ---------- */
+.produits-mini { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.produit-mini {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-height: 72px; min-width: 0; padding: 10px 12px;
+  border: 1px solid var(--bordure); border-radius: 12px; background: var(--carte); color: var(--texte); text-decoration: none;
+}
+a.produit-mini:hover { border-color: var(--accent); }
+.pm-nom { font-size: 0.875rem; font-weight: 700; overflow-wrap: anywhere; }
+.pm-prix { color: var(--discret); font-size: 0.8125rem; font-weight: 600; }
+.carte-imbriquee { border: 0; padding: 0; background: transparent; }
 
 /* ---------- Page en ligne : mot de passe ---------- */
 .verrou { display: flex; flex-direction: column; gap: 12px; max-width: 420px; margin: 24px auto; padding: 16px; background: var(--carte); border: 1px solid var(--bordure); border-radius: 12px; }

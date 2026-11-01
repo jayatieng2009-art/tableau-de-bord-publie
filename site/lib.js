@@ -425,6 +425,25 @@ export function tachesDuTableau(projets) {
   return trierAlertes(tachesAvecSource(projets).map((t) => ({ niveau: t.niveau, texte: `${t.nom} : ${t.texte}` })));
 }
 
+// Un texte trop long coupé à `max` caractères (emoji entiers) avec « … » ; chaîne vide si ce n'est pas du texte.
+export function abreger(texte, max) {
+  if (typeof texte !== "string") return "";
+  const lettres = Array.from(texte.trim());
+  return lettres.length > max ? `${lettres.slice(0, max - 1).join("")}…` : lettres.join("");
+}
+
+// « Je relis et j'oublie tout — Fiches de révision… » -> « Je relis et j'oublie tout » : le début du titre suffit à reconnaître un produit.
+export function nomCourtProduit(nom) {
+  const debut = typeof nom === "string" ? nom.split(/\s+[—–|·]\s+/)[0].trim() : "";
+  const lettres = Array.from(debut || "(sans nom)");
+  return lettres.length > 60 ? `${lettres.slice(0, 59).join("")}…` : lettres.join("");
+}
+
+// « 30 concours attendent ta décision. » : vrai pour ce rappel du bot, que la tuile et la pile de concours montrent déjà.
+export function estRappelDeDecision(texte) {
+  return typeof texte === "string" && /attend(?:ent)? ta décision/i.test(texte);
+}
+
 const ONGLET_DE_TACHE = { Concours: "concours", Produits: "boutique", Gumroad: "boutique", TikTok: "tiktok", Live: "live" };
 const NOM_DU_GROUPE = { concours: "Concours", boutique: "Boutique", tiktok: "TikTok", live: "Live" };
 const TACHE_COURTE_MAX = 110;
@@ -433,7 +452,7 @@ const TACHE_COURTE_MAX = 110;
 // `cible` est l'onglet qui détaille le thème (null pour un projet inconnu). Les simples rappels sont laissés aux onglets.
 export function groupesDeTaches(projets) {
   const triees = tachesAvecSource(projets)
-    .filter((t) => typeof t.texte === "string" && t.texte.trim())
+    .filter((t) => typeof t.texte === "string" && t.texte.trim() && !estRappelDeDecision(t.texte))
     .map((t) => ({ nom: t.nom, niveau: Object.hasOwn(RANG_ALERTE, t.niveau) ? t.niveau : "info", texte: t.texte.trim() }))
     .filter((t) => t.niveau !== "info")
     .sort((a, b) => RANG_ALERTE[a.niveau] - RANG_ALERTE[b.niveau]);

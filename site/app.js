@@ -6,7 +6,7 @@ import {
   lienSur, lienVideo, lienAnalytiquesVideo, lienAnalytiquesChaine, lienStudio, lienChaine, lienDirect,
   actionAffichee, attenteTerminee, messageApresConfirmation,
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
-  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, lienGumroad, lienTiktok,
+  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, estRappelDeDecision, nomCourtProduit, abreger, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
@@ -154,16 +154,6 @@ function blocCourbe(titre, courbe, cle) {
     : "Pas assez de points pour une courbe.";
   bloc.append(el("div", "discret fp-courbe-resume", resume));
   return bloc;
-}
-
-function tuile(nom, valeur, comparaison) {
-  const t = el("div", "tuile");
-  t.append(el("span", "tuile-valeur", formaterNombre(valeur)), el("span", "tuile-nom", nom));
-  if (comparaison) {
-    const v = variation(valeur, comparaison);
-    if (v.sens !== "inconnu") t.append(el("span", `variation variation-${v.sens}`, `${v.texte} depuis le bilan précédent`));
-  }
-  return t;
 }
 
 // ---------- Commandes du live (étape C) : visibles seulement si le serveur privé les propose ----------
@@ -383,13 +373,16 @@ function carteFallingPickaxe(projet, maintenant) {
   carte.append(zoneCommandes);
   initialiserCommandes(zoneCommandes, projet.id).catch(() => {});
 
-  const chiffres = el("div", "fp-chiffres");
+  const chiffres = el("div", "grosses-tuiles");
+  const depuisBilan = (valeur, precedent) => {
+    const v = variation(valeur, precedent);
+    return v.sens === "inconnu" ? "" : `${v.texte} depuis le bilan précédent`;
+  };
   chiffres.append(
-    tuile("Abonnés", chaine.abonnes, chaine.abonnes_veille),
-    tuile("Vues", chaine.vues, chaine.vues_veille),
-    tuile("Vidéos", chaine.videos),
+    grosseTuile({ ton: "success", valeur: formaterNombre(chaine.abonnes), libelle: "abonnés", detail: depuisBilan(chaine.abonnes, chaine.abonnes_veille) }, "👥"),
+    grosseTuile({ ton: "accent", valeur: formaterNombre(chaine.vues), libelle: "vues", detail: depuisBilan(chaine.vues, chaine.vues_veille) }, "👀"),
   );
-  carte.append(chiffres);
+  carte.append(chiffres, el("p", "discret", `${formaterNombre(chaine.videos)} vidéos sur la chaîne`));
   const ages = el("p", "discret fp-ages");
   const majAbonnes = chaine.maj_abonnes ? ageLisible(chaine.maj_abonnes, maintenant) : "date inconnue";
   const majChiffres = typeof chaine.maj_chiffres === "string" && !Number.isNaN(Date.parse(chaine.maj_chiffres))
@@ -410,7 +403,11 @@ function carteFallingPickaxe(projet, maintenant) {
     .sort((a, b) => Date.parse(a.publie_pour) - Date.parse(b.publie_pour));
   const recentes = videos.filter((v) => !aVenir.includes(v));
   carte.append(
-    sectionFp(`Vidéos à venir (${aVenir.length})`, true, listeFp(aVenir.map(ligneVideo), "Aucune vidéo programmée.")),
+    sectionFp(
+      `Vidéos à venir (${aVenir.length})`, true, listeFp(aVenir.slice(0, 3).map(ligneVideo), "Aucune vidéo programmée."),
+      ...(aVenir.length > 3 ? [sectionFp(`Voir les ${aVenir.length - 3} autres`, false, listeFp(aVenir.slice(3).map(ligneVideo), ""))] : []),
+    ),
+    sectionFp("Évolution et mises à jour", false, courbes, ages),
     sectionFp(`Vidéos récentes (${recentes.length})`, false, listeFp(recentes.map(ligneVideo), "Aucune vidéo récente.")),
     sectionFp(`Shorts : résultats (${liste(d.shorts).length})`, false, listeFp(
       liste(d.shorts).map((s) => ligneFp(
@@ -436,17 +433,17 @@ function carteFallingPickaxe(projet, maintenant) {
   barre.setAttribute("aria-label", "Quota YouTube utilisé aujourd'hui");
   carte.append(sectionFp(
     "Quota YouTube",
-    true,
+    pct >= 80, // ouvert seulement quand il devient serré
     barre,
     el("p", "discret", `${formaterNombre(quota.unites)} / ${formaterNombre(quota.limite)} unités (${pct} %) — jour ${typeof quota.jour === "string" ? quota.jour : "?"}`),
   ));
+  carte.append(sectionFp("Liens de la chaîne", false, liensChaine));
   return carte;
 }
 
 // ---------- Concours Gratuits FR et Produits numériques (étape D) ----------
 
 const DELAI_RAFRAICHISSEMENT_MS = 120000;
-const CARTES_VISIBLES = 5; // les autres cartes sont rangées dans une section repliée
 const FORMAT_RENDEZ_VOUS = new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Europe/Paris", weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
 });
@@ -476,6 +473,30 @@ function blocAlertes(alertes) {
   const zone = el("div", "cc-alertes");
   for (const a of trierAlertes(alertes)) zone.append(el("p", `alerte alerte-${a.niveau}`, a.texte));
   return zone;
+}
+
+// Les deux plus graves alertes ; les suivantes derrière « Voir les n autres ».
+function blocAlertesCourt(alertes, max = 2) {
+  const triees = trierAlertes(alertes);
+  const zone = blocAlertes(triees.slice(0, max));
+  if (triees.length > max) zone.append(sectionFp(`Voir les ${triees.length - max} autres`, false, blocAlertes(triees.slice(max, 25))));
+  return zone;
+}
+
+const TONS = new Set(["accent", "success", "warning", "danger", "neutre"]);
+
+// Une grosse tuile colorée : un gros chiffre, ce qu'il veut dire, un détail. Elle ouvre l'onglet `cible` quand il y en a un.
+function grosseTuile(t, icone) {
+  const cliquable = typeof t.cible === "string" && t.cible !== "";
+  const noeud = el(cliquable ? "button" : "div", `grosse-tuile ton-${TONS.has(t.ton) ? t.ton : "neutre"}`);
+  if (cliquable) {
+    noeud.type = "button";
+    noeud.addEventListener("click", () => allerVersOnglet(t.cible));
+  }
+  if (icone) noeud.append(el("span", "gt-icone", icone));
+  noeud.append(el("span", "gt-valeur", String(t.valeur)), el("span", "gt-libelle", String(t.libelle)));
+  if (t.detail) noeud.append(el("span", "gt-detail", String(t.detail)));
+  return noeud;
 }
 
 function tuileTexte(nom, valeur, precision) {
@@ -604,9 +625,11 @@ function sectionCleGithub() {
 }
 
 // ✅ Publier / ❌ Refuser sur une carte du bot : demande, confirmation (jeton de 30 s), puis l'ordre part vers le bot.
-function zoneDecision(c) {
+// options.grand : gros boutons (pile de concours) ; options.apres(action) : appelé une fois l'ordre envoyé.
+function zoneDecision(c, options = {}) {
+  const grand = options.grand === true;
   const zone = el("div", "cc-decision");
-  const emplacement = el("div", "cc-boutons");
+  const emplacement = el("div", grand ? "cc-boutons cc-boutons-grands" : "cc-boutons");
   const message = el("p", "cmd-message");
   message.setAttribute("role", "status");
   zone.append(emplacement, message);
@@ -620,8 +643,9 @@ function zoneDecision(c) {
     }
     if (c.approuve === true) emplacement.append(el("span", "badge-ok", "Accepté : publication au prochain passage"));
     if (!decisionsDisponibles) return; // page sans commandes : lecture seule
-    if (c.approuve !== true) emplacement.append(bouton("✅ Publier", "bouton-principal", () => demander("ok")));
-    emplacement.append(bouton("❌ Refuser", "bouton-danger", () => demander("no")));
+    const publier = c.approuve !== true ? bouton("✅ Publier", grand ? "bouton-grand bouton-publier" : "bouton-principal", () => demander("ok")) : null;
+    const refuser = bouton("❌ Refuser", grand ? "bouton-grand bouton-refuser" : "bouton-danger", () => demander("no"));
+    emplacement.append(...(grand ? [refuser, publier] : [publier, refuser]).filter(Boolean));
   }
 
   async function demander(action) {
@@ -675,6 +699,7 @@ function zoneDecision(c) {
       ordresEnvoyes.set(c.code, action);
       ecrireMessage(message, `Ordre envoyé : le bot l'appliquera à son prochain passage${textePassage()}.`, "ok");
       dessiner();
+      if (typeof options.apres === "function") options.apres(action);
     });
     const annuler = bouton("Annuler", "bouton-secondaire", () => {
       fermer();
@@ -696,17 +721,60 @@ function zoneDecision(c) {
   return zone;
 }
 
-function ligneConcours(c, maintenant) {
-  const ligne = el("li", "fp-ligne cc-carte");
-  const haut = el("div", "cc-carte-haut");
-  haut.append(el("span", "fp-titre", titreSur(c.titre)));
-  const meta = [metaCarte(c)];
-  if (typeof c.envoye_le === "string") meta.push(`envoyée ${ageLisible(c.envoye_le, maintenant)}`);
-  haut.append(el("span", "discret fp-meta", meta.filter(Boolean).join(" · ")));
-  const voir = lien("Voir le concours", lienPlateforme(c.url));
-  if (voir) haut.append(groupeDeLiens("fp-liens", voir));
-  ligne.append(haut, zoneDecision(c));
-  return ligne;
+const reportesConcours = []; // codes passés « pour plus tard » : renvoyés au bout de la pile (jusqu'au rechargement de la page)
+let confirmationPile = null; // texte de la dernière décision envoyée, montré au-dessus du concours suivant
+
+// Les concours à décider, un par un : le lot en grand, deux gros boutons, « Passer » pour y revenir plus tard.
+function pileConcours(cartes, maintenant) {
+  const zone = el("section", "pile");
+  zone.setAttribute("aria-label", "Concours à décider");
+
+  function dessiner() {
+    const pile = pileDeConcours(cartes, { maintenant, masques: new Set(ordresEnvoyes.keys()), reportes: reportesConcours });
+    const entete = el("div", "pile-entete");
+    entete.append(el("h3", "", "À décider"), pile.length > 0 ? el("span", "badge-compteur", `${pile.length} à décider`) : el("span", "badge-ok", "Tout est décidé"));
+    const noeuds = [entete];
+    if (confirmationPile) noeuds.push(el("p", "pile-confirmation", confirmationPile));
+    if (pile.length === 0) {
+      noeuds.push(el("p", "discret pile-vide", "Plus aucun concours à décider. Le bot en ajoute de nouveaux à chaque passage."));
+      zone.replaceChildren(...noeuds);
+      return;
+    }
+    const c = pile[0];
+    const p = presenterConcours(c, maintenant);
+    const grande = el("article", "pile-carte");
+    grande.append(el("div", "pile-emoji", p.emoji), el("p", "pile-titre", p.titre));
+    if (p.ligne) grande.append(el("p", "pile-ligne", p.ligne));
+    grande.append(el("span", p.fin.urgent ? "pile-fin pile-fin-urgent" : "pile-fin", p.fin.texte));
+    noeuds.push(grande);
+    const voir = lien("Voir le concours", lienPlateforme(c.url), "lien lien-pile");
+    if (voir) noeuds.push(voir);
+    noeuds.push(zoneDecision(c, {
+      grand: true,
+      apres: (action) => {
+        confirmationPile = `${action === "ok" ? "Publication" : "Refus"} envoyé pour « ${p.titre} » : le bot l'appliquera à son prochain passage${textePassage()}.`;
+        dessiner();
+      },
+    }));
+    if (!decisionsDisponibles) {
+      noeuds.push(el("p", "discret", EN_LIGNE
+        ? "Pour décider ici, enregistre une clé GitHub (section plus bas) ; sinon réponds dans Telegram."
+        : "Lecture seule : les boutons n'existent que sur le tableau privé."));
+    }
+    if (pile.length > 1) {
+      noeuds.push(bouton("Passer pour plus tard", "bouton-secondaire pile-passer", () => {
+        const deja = reportesConcours.indexOf(c.code);
+        if (deja >= 0) reportesConcours.splice(deja, 1);
+        reportesConcours.push(c.code);
+        confirmationPile = null;
+        dessiner();
+      }));
+    }
+    zone.replaceChildren(...noeuds);
+  }
+
+  dessiner();
+  return zone;
 }
 
 function carteConcours(projet, maintenant) {
@@ -730,51 +798,46 @@ function carteConcours(projet, maintenant) {
   entete.append(el("h3", "", String(projet.nom ?? "Concours Gratuits FR")));
   const aSurveiller = alertes.some((a) => a.niveau === "avertissement" || a.niveau === "erreur");
   entete.append(aSurveiller ? el("span", "badge-attention", "À surveiller") : el("span", "badge-ok", "Rien d'anormal"));
-  if (typeof d.dernier_passage === "string") entete.append(el("span", "discret", `dernier passage complet ${ageLisible(d.dernier_passage, maintenant)}`));
   entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
   carte.append(entete);
 
-  carte.append(groupeDeLiens(
+  const outils = groupeDeLiens(
     "fp-acces",
     lien("Canal Telegram", lienPlateforme(canal ? canal.lien : null), "lien lien-principal"),
     lien("Passages du bot (GitHub)", lienPlateforme(liens.actions)),
     lien("Dépôt du bot", lienPlateforme(liens.depot)),
-  ));
-  const importantes = alertes.filter((a) => a.niveau !== "info");
+  );
+  const importantes = alertes.filter((a) => a.niveau !== "info" && !estRappelDeDecision(a.texte)); // la pile ci-dessous dit déjà combien il en reste
   const rappels = alertes.filter((a) => a.niveau === "info");
-  if (importantes.length > 0) carte.append(blocAlertes(importantes));
+  if (importantes.length > 0) carte.append(blocAlertesCourt(importantes));
 
-  const aDecider = Number(compteurs.cartes) - Number(compteurs.acceptees);
-  const chiffres = el("div", "fp-chiffres");
+  // L'essentiel : les concours à décider, un par un. Tout le reste est rangé dans « Plus de détails ».
+  const plus = [];
+  carte.append(pileConcours(cartes, maintenant));
+
+  const stats = el("div", "grosses-tuiles");
   if (canal) {
     const v = variation(canal.abonnes, Number.isFinite(canal.variation) ? canal.abonnes - canal.variation : null);
     const depuis = typeof canal.variation_depuis === "string" ? `${canal.variation_depuis.slice(8, 10)}/${canal.variation_depuis.slice(5, 7)}` : "?";
-    chiffres.append(tuileNombre("Abonnés Telegram", canal.abonnes, v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}`));
+    stats.append(grosseTuile({ ton: "success", valeur: formaterNombre(canal.abonnes), libelle: "abonnés Telegram", detail: v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}` }, "👥"));
   }
-  chiffres.append(
-    tuileNombre("Publiés (7 jours)", compteurs.publies_7j, `${formaterNombre(compteurs.publies)} au total`),
-    tuileNombre("À décider", Number.isFinite(aDecider) ? aDecider : null, `${formaterNombre(compteurs.acceptees)} accepté(s) en attente`),
-    tuileTexte("Prochain passage du bot", passages.length > 0 ? delaiAvant(passages[0], maintenant) : "?", passages.length > 0 ? heureParis(passages[0]) : ""),
-  );
-  carte.append(chiffres);
+  stats.append(grosseTuile({ ton: "accent", valeur: formaterNombre(compteurs.publies_7j), libelle: "publiés cette semaine", detail: `${formaterNombre(compteurs.publies)} au total` }, "📣"));
+  carte.append(stats);
 
-  const triees = [...cartes.filter((c) => c.approuve !== true), ...cartes.filter((c) => c.approuve === true)];
+  const enAttente = cartes.filter((c) => c.approuve === true || c.ordre === "ok" || c.ordre === "no" || ordresEnvoyes.has(c.code));
+  if (enAttente.length > 0) {
+    plus.push(sectionFp(`Décidés, en attente du bot (${enAttente.length})`, false, listeFp(enAttente.map((c) => {
+      const ordre = c.ordre === "ok" || c.ordre === "no" ? c.ordre : ordresEnvoyes.get(c.code);
+      return ligneFp(presenterConcours(c, maintenant).titre, libelleOrdre(ordre) ?? "Accepté : publication au prochain passage");
+    }), "")));
+  }
   const reste = Number(compteurs.cartes) - cartes.length;
-  carte.append(sectionFp(
-    `À décider (${formaterNombre(Number.isFinite(aDecider) ? aDecider : 0)})`, true,
-    el("p", "discret", decisionsDisponibles
-      ? "Touche ✅ pour publier sur la chaîne ou ❌ pour oublier : une confirmation est demandée, puis le bot applique ton choix à son prochain passage."
-      : EN_LIGNE
-        ? "Pour décider ici, enregistre une clé GitHub (section « Activer les boutons » plus bas) ; sinon réponds dans Telegram."
-        : "Lecture seule : les boutons n'existent que sur le tableau privé."),
-    listeFp(triees.slice(0, CARTES_VISIBLES).map((c) => ligneConcours(c, maintenant)), "Aucun concours n'attend ta décision."),
-    ...(triees.length > CARTES_VISIBLES
-      ? [sectionFp(`Voir les ${triees.length - CARTES_VISIBLES} autres`, false, listeFp(triees.slice(CARTES_VISIBLES).map((c) => ligneConcours(c, maintenant)), ""))]
-      : []),
-    ...(reste > 0 ? [el("p", "discret", `${formaterNombre(reste)} autre(s) carte(s) non affichée(s).`)] : []),
-  ));
+  if (reste > 0) plus.push(el("p", "discret", `${formaterNombre(reste)} autre(s) carte(s) non affichée(s).`));
 
-  if (EN_LIGNE) carte.append(sectionCleGithub());
+  // Sans clé GitHub, les boutons de la page en ligne ne marchent pas : la section reste visible. Avec la clé, elle se range dans les détails.
+  if (EN_LIGNE && !lireJetonGithub()) carte.append(sectionCleGithub());
+  else if (EN_LIGNE) plus.push(sectionCleGithub());
+  plus.push(sectionFp("Outils et liens", false, outils));
 
   // Le suivi de l'objectif et les détails du bot, repliés : on les ouvre seulement quand on en a besoin.
   const suivi = [];
@@ -791,11 +854,12 @@ function carteConcours(projet, maintenant) {
     "p", "discret fp-ages",
     `Refusés : ${formaterNombre(compteurs.refus)} · Expirés : ${formaterNombre(compteurs.expires)} · File d'attente du bot : ${formaterNombre(compteurs.file)}`
     + ` · Ordres envoyés pas encore appliqués : ${formaterNombre(d.ordres_en_attente)}`
+    + (typeof d.dernier_passage === "string" ? ` · Dernier passage complet ${ageLisible(d.dernier_passage, maintenant)}` : "")
     + (typeof d.derniere_activite === "string" ? ` · Dernière mémoire enregistrée ${ageLisible(d.derniere_activite, maintenant)}` : ""),
   ));
-  carte.append(sectionFp("Abonnés et suivi du bot", false, ...suivi));
-  if (rappels.length > 0) carte.append(sectionFp(`Rappels (${rappels.length})`, false, blocAlertes(rappels)));
-  carte.append(sectionFp(`Derniers concours publiés (${liste(d.publies_recents).length})`, false, listeFp(
+  plus.push(sectionFp("Abonnés et suivi du bot", false, ...suivi));
+  if (rappels.length > 0) plus.push(sectionFp(`Rappels (${rappels.length})`, false, blocAlertes(rappels)));
+  plus.push(sectionFp(`Derniers concours publiés (${liste(d.publies_recents).length})`, false, listeFp(
     liste(d.publies_recents).map((p) => ligneFp(
       p.titre,
       [p.plateforme, p.publie_le ? `publié ${ageLisible(p.publie_le, maintenant)}` : null, p.fin ? `fin ${p.fin}` : null].filter(Boolean).join(" · "),
@@ -804,7 +868,7 @@ function carteConcours(projet, maintenant) {
     "Aucun concours publié.",
   )));
   if (canal) {
-    carte.append(sectionFp(`Vues des dernières publications du canal (${liste(canal.publications).length})`, false, listeFp(
+    plus.push(sectionFp(`Vues des dernières publications du canal (${liste(canal.publications).length})`, false, listeFp(
       liste(canal.publications).map((p) => ligneFp(
         p.texte || `Publication ${p.id}`,
         [compter(p.vues, "vue", "vues"), p.quand ? ageLisible(p.quand, maintenant) : null].filter(Boolean).join(" · "),
@@ -817,16 +881,17 @@ function carteConcours(projet, maintenant) {
   barreApify.max = 100;
   barreApify.value = pourcentageQuota(apify.depense_usd, apify.plafond_usd);
   barreApify.setAttribute("aria-label", "Budget Apify utilisé ce mois-ci");
-  carte.append(sectionFp(
+  plus.push(sectionFp(
     "Budget et quotas", false,
     barreApify,
     el("p", "discret", `Apify : ${formaterNombre(apify.depense_usd)} $ dépensés sur ${formaterNombre(apify.plafond_usd)} $ (réserve de sécurité ${formaterNombre(apify.reserve_usd)} $), cycle du ${typeof apify.cycle === "string" ? apify.cycle : "?"}`),
     el("p", "discret", `YouTube : ${formaterNombre(youtube.unites)} unités utilisées aujourd'hui, ${formaterNombre(youtube.recherches)} recherche(s).`),
   ));
-  carte.append(sectionFp(`Prochains passages du bot (${passages.length})`, false, listeFp(
+  plus.push(sectionFp(`Prochains passages du bot (${passages.length})`, false, listeFp(
     passages.map((p) => ligneFp(`${delaiAvant(p, maintenant)} (${heureParis(p)}, heure de Paris)`, "")),
     "Les prochains passages sont introuvables.",
   )));
+  carte.append(sectionFp("Plus de détails", false, ...plus));
   return carte;
 }
 
@@ -1034,63 +1099,69 @@ function carteTiktok(projet, maintenant) {
   const comptes = liste(d.comptes);
   const carte = el("article", "carte carte-large");
   carte.append(enteteDeCarte(projet, "Analytiques TikTok", comptes.length > 0 ? el("span", "badge-ok", `${comptes.length} compte(s)`) : el("span", "badge-attention", "À configurer")));
-  carte.append(groupeDeLiens(
-    "fp-acces",
-    lien("TikTok Studio : analyses", "https://www.tiktok.com/tiktokstudio/analytics", "lien lien-principal"),
-    lien("TikTok Studio : contenu", "https://www.tiktok.com/tiktokstudio/content"),
-  ));
   const alertes = trierAlertes([
     ...liste(d.a_faire),
     ...(Array.isArray(d.avertissements) ? d.avertissements.filter((x) => typeof x === "string").map((texte) => ({ niveau: "avertissement", texte })) : []),
   ]);
-  if (alertes.length > 0) carte.append(blocAlertes(alertes));
+  if (alertes.length > 0) carte.append(blocAlertesCourt(alertes));
+  const plus = []; // tout ce qui n'est pas l'essentiel : repliés dans « Plus de détails »
   for (const c of comptes) {
     carte.append(el("p", "cmd-titre", `@${String(c.compte)}${typeof c.nom === "string" ? ` (${c.nom})` : ""}`));
     const v = variation(c.abonnes, Number.isFinite(c.variation) ? c.abonnes - c.variation : null);
     const depuis = typeof c.variation_depuis === "string" ? `${c.variation_depuis.slice(8, 10)}/${c.variation_depuis.slice(5, 7)}` : "?";
-    const chiffres = el("div", "fp-chiffres");
     const suivies = objet(objet(publiques.par_compte)[c.compte]);
-    chiffres.append(
-      tuileNombre("Abonnés", c.abonnes, v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}`),
-      tuileNombre("Vues (vidéos suivies)", c.vues_total, Number.isFinite(suivies.suivies) ? `${suivies.lues ?? 0} vidéo(s) lue(s) sur ${suivies.suivies}` : ""),
-      tuileNombre("J'aime", c.jaime), tuileNombre("Vidéos", c.videos),
+    const tuiles = el("div", "grosses-tuiles");
+    tuiles.append(
+      grosseTuile({ ton: "success", valeur: formaterNombre(c.abonnes), libelle: "abonnés", detail: v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}` }, "👥"),
+      grosseTuile({ ton: "accent", valeur: formaterNombre(c.vues_total), libelle: "vues", detail: Number.isFinite(suivies.suivies) ? `${suivies.lues ?? 0} vidéo(s) lue(s) sur ${suivies.suivies}` : "" }, "👀"),
     );
-    carte.append(chiffres);
-    if (liste(c.courbe).length >= 2) carte.append(blocCourbe(`Abonnés @${String(c.compte)}`, liste(c.courbe), "valeur"));
-    if (liste(c.courbe_vues).length >= 2) carte.append(blocCourbe(`Vues @${String(c.compte)}`, liste(c.courbe_vues), "valeur"));
+    carte.append(tuiles, el("p", "discret", `${formaterNombre(c.jaime)} j'aime · ${formaterNombre(c.videos)} vidéos`));
+    const courbesCompte = [];
+    if (liste(c.courbe).length >= 2) courbesCompte.push(blocCourbe(`Abonnés @${String(c.compte)}`, liste(c.courbe), "valeur"));
+    if (liste(c.courbe_vues).length >= 2) courbesCompte.push(blocCourbe(`Vues @${String(c.compte)}`, liste(c.courbe_vues), "valeur"));
+    if (courbesCompte.length > 0) plus.push(sectionFp(`Évolution @${String(c.compte)}`, false, ...courbesCompte));
   }
+  const ligneVideoTiktok = (v) => ligneFp(
+    abreger(v.titre, 90),
+    [`@${String(v.compte)}`, compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
+      compter(v.partages, "partage", "partages"), typeof v.publie_le === "string" ? `publiée ${ageLisible(v.publie_le, maintenant)}` : null]
+      .filter((x) => typeof x === "string" && x !== "?" && x !== "@undefined").join(" · "),
+    groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
+  );
+  const ligneExport = (v) => ligneFp(
+    abreger(v.titre, 90),
+    [compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
+      compter(v.partages, "partage", "partages"), typeof v.date === "string" ? v.date : null].filter((x) => typeof x === "string" && x !== "?").join(" · "),
+    groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
+  );
+  // Le palmarès : les 3 premières vidéos en vue, les suivantes dans une section repliée.
+  const palmares = (titre, videos, ligneDe, vide, introduction) => {
+    const reste = videos.length > 3 ? [sectionFp(`Voir les ${videos.length - 3} autres`, false, listeFp(videos.slice(3).map(ligneDe), ""))] : [];
+    return sectionFp(`${titre} (${videos.length})`, true, ...(introduction ? [introduction] : []), listeFp(videos.slice(0, 3).map(ligneDe), vide), ...reste);
+  };
   if (Number(publiques.suivies) > 0) {
     const lues = Number(publiques.lues);
-    carte.append(sectionFp(`Vidéos les plus vues (${liste(publiques.liste).length})`, true,
-      el("p", "discret", `Lecture publique, sans connexion : ${lues} vidéo(s) lue(s) sur ${publiques.suivies} suivies`
-        + `${typeof publiques.maj === "string" ? `, dernière lecture ${ageLisible(publiques.maj, maintenant)}` : ""}. Chaque vidéo est relue toutes les 6 heures.`),
-      listeFp(
-        liste(publiques.liste).map((v) => ligneFp(
-          v.titre,
-          [`@${String(v.compte)}`, compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
-            compter(v.partages, "partage", "partages"), typeof v.publie_le === "string" ? `publiée ${ageLisible(v.publie_le, maintenant)}` : null]
-            .filter((x) => typeof x === "string" && x !== "?").join(" · "),
-          groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
-        )),
-        lues === 0 ? "Première lecture en cours : revenez dans une minute." : "Aucune vidéo lisible.",
-      ),
-    ));
+    carte.append(palmares("Vidéos les plus vues", liste(publiques.liste), ligneVideoTiktok,
+      lues === 0 ? "Première lecture en cours : revenez dans une minute." : "Aucune vidéo lisible."));
+    plus.push(el("p", "discret", `Lecture publique, sans connexion : ${lues} vidéo(s) lue(s) sur ${publiques.suivies} suivies`
+      + `${typeof publiques.maj === "string" ? `, dernière lecture ${ageLisible(publiques.maj, maintenant)}` : ""}. Chaque vidéo est relue toutes les 6 heures.`));
   }
   if (Number(exports.nb_fichiers) > 0) {
-    const chiffres = el("div", "fp-chiffres");
-    chiffres.append(tuileNombre("Vues (exports)", exports.total_vues), tuileNombre("Vidéos suivies", exports.nb_videos), tuileNombre("Fichiers lus", exports.nb_fichiers));
-    carte.append(chiffres);
-    carte.append(sectionFp(`Vidéos les plus vues (${liste(exports.videos).length})`, true, listeFp(
-      liste(exports.videos).map((v) => ligneFp(
-        v.titre,
-        [compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
-          compter(v.partages, "partage", "partages"), typeof v.date === "string" ? v.date : null].filter((x) => typeof x === "string" && x !== "?").join(" · "),
-        groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
-      )),
-      "Aucune vidéo dans les exports.",
-    )));
+    const tuiles = el("div", "grosses-tuiles");
+    tuiles.append(
+      grosseTuile({ ton: "accent", valeur: formaterNombre(exports.total_vues), libelle: "vues (exports)", detail: `${formaterNombre(exports.nb_videos)} vidéos suivies` }, "👀"),
+    );
+    carte.append(tuiles, palmares("Vidéos les plus vues (exports)", liste(exports.videos), ligneExport, "Aucune vidéo dans les exports."));
   }
-  carte.append(el("p", "discret", "Les chiffres viennent des pages publiques TikTok (sans connexion) ; les analyses privées (audience, temps de visionnage) exigent un export CSV de TikTok Studio. Pour suivre une nouvelle vidéo, ajoute son adresse dans videos.txt."));
+  plus.push(
+    groupeDeLiens(
+      "fp-acces",
+      lien("TikTok Studio : analyses", "https://www.tiktok.com/tiktokstudio/analytics", "lien lien-principal"),
+      lien("TikTok Studio : contenu", "https://www.tiktok.com/tiktokstudio/content"),
+    ),
+    el("p", "discret", "Les chiffres viennent des pages publiques TikTok (sans connexion) ; les analyses privées (audience, temps de visionnage) exigent un export CSV de TikTok Studio. Pour suivre une nouvelle vidéo, ajoute son adresse dans videos.txt."),
+  );
+  carte.append(sectionFp("Plus de détails", false, ...plus));
   return carte;
 }
 
@@ -1202,27 +1273,106 @@ function carteRevenus(etat) {
   return carte;
 }
 
-// En haut de page : ce qu'il reste à faire et les prochains rendez-vous, tous projets confondus.
-function blocVueEnsemble(projets, maintenant) {
-  const taches = tachesDuTableau(projets);
-  const importantes = taches.filter((t) => t.niveau !== "info");
-  const rappels = taches.length - importantes.length;
-  const agenda = construireAgenda(projets, maintenant);
-  if (taches.length === 0 && agenda.length === 0) return null;
-  const section = el("section", "source vue-ensemble");
-  const titre = el("div", "source-entete");
-  titre.append(el("h2", "", "Vue d'ensemble"));
-  section.append(titre);
+// ---------- Boutique : produits, ventes et revenus au même endroit ----------
+
+function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
   const carte = el("article", "carte carte-large");
-  carte.append(el("p", "cmd-titre", importantes.length > 0 ? `À faire ou à surveiller (${importantes.length})` : "Rien d'urgent"));
-  if (importantes.length > 0) carte.append(blocAlertes(importantes.slice(0, 5)));
-  if (importantes.length > 5) carte.append(sectionFp(`Voir les ${importantes.length - 5} autres`, false, blocAlertes(importantes.slice(5, 25))));
-  if (rappels > 0) carte.append(el("p", "discret", `${rappels} rappel(s) de moindre importance dans les cartes.`));
+  const entete = el("div", "fp-entete");
+  entete.append(el("h3", "", "Boutique"), bouton("Actualiser", "bouton-secondaire", () => charger()));
+  carte.append(entete);
+
+  const g = objet(gumroad && gumroad.details);
+  const catalogue = liste(g.boutique ? objet(g.boutique).produits : []);
+  const p = objet(produits && produits.details);
+  const compteurs = objet(p.compteurs);
+  const calendrier = classerCalendrier(liste(p.calendrier), maintenant);
+  const prochaine = p.prochaine ? objet(p.prochaine) : null;
+
+  const tuiles = el("div", "grosses-tuiles");
+  const revenu = tuilesAccueil(gumroad ? [gumroad] : [], etat).find((t) => t.id === "revenu");
+  if (revenu) tuiles.append(grosseTuile({ ...revenu, cible: null }, "💰"));
+  if (catalogue.length > 0) {
+    const prix = catalogue.map((x) => x.prix_cents).filter(Number.isInteger);
+    const moyen = prix.length > 0 ? Math.round(prix.reduce((a, b) => a + b, 0) / prix.length) : null;
+    tuiles.append(grosseTuile({ ton: "success", valeur: formaterNombre(catalogue.length), libelle: "produits en ligne", detail: moyen === null ? "" : `prix moyen ${formaterMontant(moyen, "€")}` }, "🛍️"));
+  }
+  if (produits) {
+    const retard = Number(compteurs.en_retard);
+    tuiles.append(
+      grosseTuile({ ton: "accent", valeur: formaterNombre(calendrier.aujourdhui.length), libelle: "vidéos à poster aujourd'hui", detail: prochaine && prochaine.quand ? `prochaine ${delaiAvant(prochaine.quand, maintenant)}` : "" }, "🎬"),
+      grosseTuile({ ton: retard > 0 ? "warning" : "success", valeur: formaterNombre(Number.isFinite(retard) ? retard : null), libelle: "vidéos en retard", detail: `${formaterNombre(compteurs.videos_faites)} sur ${formaterNombre(compteurs.videos_prevues)} publiées` }, "⏰"),
+    );
+  }
+  if (tuiles.childElementCount > 0) carte.append(tuiles);
+
+  const aVerifier = groupesDeTaches([produits, gumroad].filter(Boolean))[0];
+  if (aVerifier) {
+    carte.append(el("p", `alerte alerte-${aVerifier.niveau === "erreur" ? "erreur" : "avertissement"}`,
+      `${aVerifier.nb > 1 ? `${aVerifier.nb} points à vérifier, dont : ` : ""}${aVerifier.texte}`));
+  }
+
+  if (catalogue.length > 0) {
+    const grille = el("div", "produits-mini");
+    for (const produit of catalogue) {
+      const prix = Number.isInteger(produit.prix_cents) ? formaterMontant(produit.prix_cents, produit.devise === "EUR" ? "€" : produit.devise || "") : "";
+      const vignette = lien("", lienGumroad(produit.lien), "produit-mini") ?? el("div", "produit-mini");
+      vignette.append(el("span", "pm-nom", nomCourtProduit(produit.nom)), el("span", "pm-prix", prix));
+      grille.append(vignette);
+    }
+    carte.append(grille);
+  } else if (gumroad && g.boutique) {
+    carte.append(el("p", "alerte alerte-info", "La boutique publique est vide ou illisible pour le moment."));
+  }
+
+  const nichee = (noeud) => {
+    noeud.classList.add("carte-imbriquee");
+    return noeud;
+  };
+  if (produits) carte.append(sectionFp("Calendrier de publication et produits", false, nichee(carteSure(produits, maintenant, carteProduits))));
+  if (gumroad) carte.append(sectionFp("Ventes Gumroad en détail", false, nichee(carteSure(gumroad, maintenant, carteGumroad))));
+  if (carteDesRevenus) carte.append(sectionFp("Revenus saisis à la main", false, nichee(carteDesRevenus)));
+  return carte;
+}
+
+// ---------- Accueil : l'essentiel d'un coup d'œil ----------
+
+const ICONES_TUILES = { concours: "🎁", abonnes: "👥", revenu: "💰", live: "🔴" };
+const MAX_A_FAIRE = 3;
+
+// Quatre gros chiffres, ce qu'il faut faire en premier (trois lignes au plus, une par thème), le prochain rendez-vous.
+function blocAccueil(projets, etat, maintenant) {
+  const tuiles = tuilesAccueil(projets, etat);
+  const groupes = groupesDeTaches(projets);
+  const agenda = construireAgenda(projets, maintenant);
+  if (tuiles.length === 0 && groupes.length === 0 && agenda.length === 0) return null;
+  const section = el("section", "accueil");
+  if (tuiles.length > 0) {
+    const grille = el("div", "grosses-tuiles");
+    for (const t of tuiles) grille.append(grosseTuile(t, ICONES_TUILES[t.id]));
+    section.append(grille);
+  }
+
+  const ligneDe = (groupe) => {
+    const ligne = el("button", "faire-ligne");
+    ligne.type = "button";
+    const corps = el("span", "faire-corps");
+    corps.append(el("span", "faire-nom", groupe.nb > 1 ? `${groupe.nom} · ${groupe.nb}` : groupe.nom), el("span", "faire-texte", groupe.texte));
+    ligne.append(el("span", groupe.niveau === "erreur" ? "faire-point faire-point-erreur" : "faire-point"), corps);
+    if (groupe.cible) ligne.addEventListener("click", () => allerVersOnglet(groupe.cible));
+    return ligne;
+  };
+  const carte = el("article", "carte carte-large");
+  carte.append(el("p", "cmd-titre", groupes.length > 0 ? "À faire en premier" : "Rien d'urgent"));
+  for (const groupe of groupes.slice(0, MAX_A_FAIRE)) carte.append(ligneDe(groupe));
+  if (groupes.length > MAX_A_FAIRE) carte.append(sectionFp(`Voir le reste (${groupes.length - MAX_A_FAIRE})`, false, ...groupes.slice(MAX_A_FAIRE).map(ligneDe)));
   if (agenda.length > 0) {
-    carte.append(sectionFp(`Prochains rendez-vous (${agenda.length})`, true, listeFp(
-      agenda.map((e) => ligneFp(e.texte, `${delaiAvant(e.quand, maintenant)} · ${rendezVous({ quand: e.quand })} · ${e.source}`)),
-      "",
-    )));
+    carte.append(el("p", "accueil-rdv", `Prochain rendez-vous : ${agenda[0].texte} · ${delaiAvant(agenda[0].quand, maintenant)}`));
+    if (agenda.length > 1) {
+      carte.append(sectionFp(`Voir les ${agenda.length - 1} suivants`, false, listeFp(
+        agenda.slice(1).map((e) => ligneFp(e.texte, `${delaiAvant(e.quand, maintenant)} · ${rendezVous({ quand: e.quand })} · ${e.source}`)),
+        "",
+      )));
+    }
   }
   section.append(carte);
   return section;
@@ -1259,7 +1409,9 @@ function carteDuProjet(projet, maintenant) {
 // ---------- Onglets : un thème à la fois, pour ne pas faire défiler toute la page sur téléphone ----------
 
 const CLE_ONGLET = "tableau.onglet";
+const ICONES_ONGLETS = { resume: "🏠", concours: "🎁", boutique: "🛍️", tiktok: "🎵", live: "🔴", autres: "📁" };
 let ongletActif = null;
+let allerVersOnglet = () => {}; // rebranché à chaque affichage : ouvre l'onglet demandé (tuiles et lignes de l'accueil)
 
 function lireOngletMemorise() {
   try {
@@ -1300,7 +1452,7 @@ function barreDOnglets(onglets, panneaux, projets) {
     bouton.dataset.onglet = o.id;
     bouton.id = `onglet-${o.id}`;
     bouton.setAttribute("aria-controls", `panneau-${o.id}`);
-    bouton.append(el("span", "", o.titre));
+    bouton.append(el("span", "onglet-icone", ICONES_ONGLETS[o.id] ?? "📁"), el("span", "onglet-titre", o.titre));
     const pastille = pastilleOnglet(o.id, projets);
     if (pastille) bouton.append(el("span", `pastille pastille-${pastille.niveau}`, pastille.texte));
     bouton.addEventListener("click", () => {
@@ -1316,6 +1468,11 @@ function barreDOnglets(onglets, panneaux, projets) {
     boutons.push(bouton);
     barre.append(bouton);
   });
+  allerVersOnglet = (id) => {
+    if (!onglets.some((o) => o.id === id)) return;
+    choisir(id);
+    window.scrollTo(0, 0);
+  };
   return { barre, choisir };
 }
 
@@ -1339,9 +1496,9 @@ function afficher(paquet) {
     .map(([id, r]) => el("p", "avertissement", `${NOMS_SOURCES[id] ?? id} : ces données sont anciennes (PC éteint ou collecte arrêtée), ne vous y fiez pas. Mises à jour ${ageLisible(r.releve_a, maintenant)}.`));
   let vue = null;
   try {
-    vue = blocVueEnsemble(projets, maintenant);
+    vue = blocAccueil(projets, etatRevenus, maintenant);
   } catch {
-    vue = null; // la vue d'ensemble est un plus : une donnée inattendue ne doit pas cacher les cartes
+    vue = null; // l'accueil est un plus : une donnée inattendue ne doit pas cacher les cartes
   }
   let revenus = null;
   if (etatRevenus) {
@@ -1351,7 +1508,7 @@ function afficher(paquet) {
       revenus = null;
     }
   }
-  const onglets = rangerEnOnglets(projets, revenus ? ["argent"] : []).filter((o) => o.id !== "resume" || vue);
+  const onglets = rangerEnOnglets(projets, revenus ? ["boutique"] : []).filter((o) => o.id !== "resume" || vue);
   const panneaux = new Map();
   for (const o of onglets) {
     const panneau = el("section", "panneau");
@@ -1360,8 +1517,23 @@ function afficher(paquet) {
     panneau.setAttribute("aria-labelledby", `onglet-${o.id}`);
     if (o.id === "resume") panneau.append(vue);
     const cartes = el("div", "cartes");
-    for (const projet of o.projets) cartes.append(carteDuProjet(projet, maintenant));
-    if (o.id === "argent" && revenus) cartes.append(revenus);
+    if (o.id === "boutique") {
+      // Produits, boutique Gumroad et revenus ne font qu'une carte ; un projet de cet onglet en erreur garde sa carte d'erreur.
+      const produits = o.projets.find((p) => p.adaptateur === "produits-numeriques" && p.statut === "ok") ?? null;
+      const gumroad = o.projets.find((p) => p.adaptateur === "gumroad" && p.statut === "ok") ?? null;
+      if (produits || gumroad || revenus) {
+        try {
+          cartes.append(carteBoutique(produits, gumroad, etatRevenus, revenus, maintenant));
+        } catch {
+          const erreur = el("article", "carte carte-large");
+          erreur.append(el("h3", "", "Boutique"), el("p", "alerte alerte-erreur", "Données illisibles pour la boutique."));
+          cartes.append(erreur);
+        }
+      }
+      for (const projet of o.projets) if (projet !== produits && projet !== gumroad) cartes.append(carteDuProjet(projet, maintenant));
+    } else {
+      for (const projet of o.projets) cartes.append(carteDuProjet(projet, maintenant));
+    }
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);
   }
