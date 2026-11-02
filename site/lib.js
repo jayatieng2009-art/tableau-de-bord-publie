@@ -316,6 +316,8 @@ export function presenterConcours(carte, maintenant) {
   return { emoji, titre: titre ?? "(sans titre)", ligne, fin: libelleFin(c.fin, maintenant) };
 }
 
+const nomPlateforme = (c) => (typeof c.plateforme === "string" && c.plateforme.trim() ? c.plateforme.trim() : "Autre");
+
 // Les concours à décider, dans l'ordre où on les montre un par un : meilleurs scores d'abord, les terminés en dernier,
 // ceux qu'on a reportés tout au bout (dans l'ordre du report). Sont écartés : sans code, déjà acceptés, ordre déjà donné, `masques`.
 export function pileDeConcours(cartes, options = {}) {
@@ -323,10 +325,13 @@ export function pileDeConcours(cartes, options = {}) {
   const maintenant = options.maintenant instanceof Date ? options.maintenant : new Date();
   const masques = options.masques instanceof Set ? options.masques : new Set();
   const reportes = Array.isArray(options.reportes) ? options.reportes : [];
+  const filtre = objetSur(options.filtre); // { plateforme: "YouTube" } et / ou { urgent: true } ; sans filtre, tout
   const termine = (c) => (libelleFin(c.fin, maintenant).termine ? 1 : 0);
   const score = (c) => (estNombre(c.score) ? c.score : -Infinity);
   const ordonnees = cartes
     .filter((c) => c && typeof c === "object" && typeof c.code === "string" && c.approuve !== true && c.ordre !== "ok" && c.ordre !== "no" && !masques.has(c.code))
+    .filter((c) => !filtre.plateforme || nomPlateforme(c) === filtre.plateforme)
+    .filter((c) => filtre.urgent !== true || libelleFin(c.fin, maintenant).urgent)
     .map((c, i) => ({ c, i }))
     .sort((x, y) => (termine(x.c) - termine(y.c)) || (score(y.c) - score(x.c)) || (x.i - y.i))
     .map((x) => x.c);
@@ -677,7 +682,7 @@ const COMMANDES_LIVE = {
   },
   lancer: {
     libelle: "Lancer le live", danger: false,
-    avertissement: `Démarre le serveur du jeu, OBS et le direct YouTube : comptez 1 à 3 minutes.${RAPPEL_PC_ALLUME}`,
+    avertissement: `Démarre le serveur du jeu, OBS et le direct YouTube : comptez 1 à 3 minutes. Falling Pickaxe refuse de lancer en dehors de ses heures de direct (8 h à 22 h).${RAPPEL_PC_ALLUME}`,
   },
 };
 
@@ -690,8 +695,9 @@ export function commandeLiveEnLigne(enCours) {
 }
 
 // Le titre exact du ticket que le PC attend (voir ordres_live_github.py) ; null pour toute autre action.
+// « verrou » désactive les commandes du live en ligne (l'interrupteur d'urgence) ; seul le PC peut les rouvrir.
 export function titreOrdreLive(action) {
-  return action === "couper" || action === "lancer" ? `live_${action}` : null;
+  return action === "couper" || action === "lancer" || action === "verrou" ? `live_${action}` : null;
 }
 
 // Les ordres du live déjà donnés et pas encore exécutés : « couper » et / ou « lancer », d'après les titres des tickets ouverts.
@@ -699,7 +705,7 @@ export function actionsLiveEnAttente(tickets) {
   if (!Array.isArray(tickets)) return [];
   const actions = [];
   for (const t of tickets) {
-    const trouve = t && typeof t.title === "string" ? /^live_(couper|lancer)$/.exec(t.title) : null;
+    const trouve = t && typeof t.title === "string" ? /^live_(couper|lancer|verrou)$/.exec(t.title) : null;
     if (trouve && !actions.includes(trouve[1])) actions.push(trouve[1]);
   }
   return actions;
@@ -712,4 +718,215 @@ export function reponseDuPc(commentaires, proprietaire) {
     && c.user.login.toLowerCase() === proprietaire.toLowerCase() && typeof c.body === "string" && c.body.trim());
   if (siens.length === 0) return null;
   return Array.from(siens[siens.length - 1].body.trim()).slice(0, 200).join("");
+}
+
+// ---------- Bandeau « PC éteint », tirer pour actualiser, historique des ordres ----------
+
+// « 45 min », « 3 h », « 2 j » ; « ? » si ce n'est pas une durée exploitable.
+export function dureeLisible(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "?";
+  if (ms < HEURE) return `${Math.floor(ms / MINUTE)} min`;
+  if (ms < JOUR) return `${Math.floor(ms / HEURE)} h`;
+  return `${Math.floor(ms / JOUR)} j`;
+}
+
+const SEUIL_PC_ETEINT = 90 * MINUTE;
+
+// Un avertissement quand la page en ligne n'a rien reçu du PC depuis plus de 90 minutes (le PC publie toutes les 30 minutes quand il est allumé) ; null sinon.
+export function messagePcEteint(publieA, maintenant) {
+  const ecoule = typeof publieA === "string" ? maintenant.getTime() - Date.parse(publieA) : NaN;
+  if (!Number.isFinite(ecoule) || ecoule <= SEUIL_PC_ETEINT) return null;
+  return `Le PC n'a rien publié depuis ${dureeLisible(ecoule)} : il est probablement éteint. Les ✅ / ❌ des concours marchent quand même (le bot les applique), mais les ordres du live attendent le PC.`;
+}
+
+export const SEUIL_TIRER = 70;
+const TIRER_MAX = 120;
+
+// De combien de pixels le doigt a tiré la page vers le bas : 0 si la page n'est pas tout en haut ou si le doigt remonte.
+export function distanceTiree(departY, courantY, defilement) {
+  if (![departY, courantY, defilement].every((n) => typeof n === "number" && Number.isFinite(n))) return 0;
+  if (defilement > 0) return 0;
+  const ecart = courantY - departY;
+  return ecart > 0 ? Math.min(ecart, TIRER_MAX) : 0;
+}
+
+export function doitActualiser(distance) {
+  return typeof distance === "number" && distance >= SEUIL_TIRER;
+}
+
+const LIBELLES_TICKETS = {
+  live_couper: { genre: "live", icone: "🛑", texte: "Couper le live" },
+  live_lancer: { genre: "live", icone: "▶️", texte: "Lancer le live" },
+  live_verrou: { genre: "live", icone: "🔒", texte: "Verrouiller les commandes du live" },
+};
+
+// Ce que dit le titre d'un ticket d'ordre (concours ou live) ; null pour tout autre ticket.
+export function libelleOrdreTicket(ticket) {
+  const titre = ticket && typeof ticket === "object" ? ticket.title : null;
+  if (typeof titre !== "string") return null;
+  if (/^ok_[0-9a-f]{10}$/.test(titre)) return { genre: "concours", icone: "✅", texte: "Publication demandée" };
+  if (/^no_[0-9a-f]{10}$/.test(titre)) return { genre: "concours", icone: "❌", texte: "Refus demandé" };
+  return Object.hasOwn(LIBELLES_TICKETS, titre) ? { ...LIBELLES_TICKETS[titre] } : null;
+}
+
+// Les ordres déjà traités (tickets fermés), le plus récent d'abord : { numero, genre, icone, texte, quand }.
+export function historiqueDesOrdres(tickets, max = 10) {
+  if (!Array.isArray(tickets)) return [];
+  const lignes = [];
+  for (const t of tickets) {
+    const libelle = libelleOrdreTicket(t);
+    if (!libelle || !Number.isInteger(t.number)) continue;
+    const quand = [t.closed_at, t.created_at].find((d) => typeof d === "string" && !Number.isNaN(Date.parse(d)));
+    if (quand) lignes.push({ numero: t.number, ...libelle, quand });
+  }
+  return lignes.sort((a, b) => Date.parse(b.quand) - Date.parse(a.quand)).slice(0, max);
+}
+
+// ---------- Concours : combien par plateforme, lots de refus, statistiques ----------
+
+// [{ nom, n }] : les plus nombreuses d'abord, à égalité l'ordre alphabétique.
+function compterParPlateforme(cartes) {
+  const nombres = new Map();
+  for (const c of cartes) nombres.set(nomPlateforme(c), (nombres.get(nomPlateforme(c)) ?? 0) + 1);
+  return [...nombres].map(([nom, n]) => ({ nom, n })).sort((a, b) => b.n - a.n || a.nom.localeCompare(b.nom, "fr"));
+}
+
+// Les concours à décider, comptés par plateforme (pour les filtres).
+export function plateformesDeLaPile(cartes, maintenant, masques = new Set()) {
+  return compterParPlateforme(pileDeConcours(cartes, { maintenant, masques }));
+}
+
+const PLAFOND_LOT = 50; // le bot lit 50 ordres au plus par passage
+const SCORE_BAS = 55;
+
+// Les lots de refus proposés pour la pile : { id, libelle, codes } ; le libellé donne le nombre réel, le lot est plafonné à 50.
+export function groupesDeRefus(pile, maintenant) {
+  const cartes = Array.isArray(pile) ? pile.filter((c) => c && typeof c === "object" && typeof c.code === "string") : [];
+  const lot = (id, libelle, choisies) => ({ id, libelle: `${libelle} (${choisies.length})`, codes: choisies.slice(0, PLAFOND_LOT).map((c) => c.code) });
+  const groupes = [];
+  const termines = cartes.filter((c) => libelleFin(c.fin, maintenant).termine);
+  if (termines.length > 0) groupes.push(lot("termines", "Concours terminés", termines));
+  for (const { nom, n } of compterParPlateforme(cartes)) {
+    if (n >= 2) groupes.push(lot(`plateforme:${nom}`, `Tous ceux de ${nom}`, cartes.filter((c) => nomPlateforme(c) === nom)));
+  }
+  const faibles = cartes.filter((c) => estNombre(c.score) && c.score <= SCORE_BAS);
+  if (faibles.length >= 2) groupes.push(lot("score-bas", `Score de ${SCORE_BAS} ou moins`, faibles));
+  return groupes;
+}
+
+// Les chiffres de l'onglet Concours : à décider (dont terminés) et publiés récemment, par plateforme.
+export function statsConcours(details, maintenant) {
+  const d = objetSur(details);
+  const pile = pileDeConcours(Array.isArray(d.cartes) ? d.cartes : [], { maintenant });
+  const publies = listeSure(d.publies_recents);
+  const compteurs = objetSur(d.compteurs);
+  const nombre = (v) => (estNombre(v) ? v : null);
+  return {
+    aDecider: pile.length, termines: pile.filter((c) => libelleFin(c.fin, maintenant).termine).length,
+    parPlateformeADecider: compterParPlateforme(pile),
+    publiesRecents: publies.length, publiesParPlateforme: compterParPlateforme(publies),
+    publies7j: nombre(compteurs.publies_7j), publiesTotal: nombre(compteurs.publies), refus: nombre(compteurs.refus),
+  };
+}
+
+// ---------- Argent : ventes, revenu par période, courbe, objectif Telegram, bilan de la semaine ----------
+
+const venteValide = (v) => v && typeof v === "object" && typeof v.quand === "string" && !Number.isNaN(Date.parse(v.quand))
+  && Number.isInteger(v.montant_cents) && v.montant_cents >= 0;
+
+// Les ventes lisibles, la plus récente d'abord (les remboursées restent, signalées par `rembourse`).
+export function ventesRecentes(ventes, max = 5) {
+  if (!Array.isArray(ventes)) return [];
+  return ventes.filter(venteValide).sort((a, b) => Date.parse(b.quand) - Date.parse(a.quand)).slice(0, max).map((v) => ({ ...v }));
+}
+
+// Les n derniers jours civils à Paris, du plus ancien au plus récent (« 2026-11-01 »).
+function derniersJours(maintenant, n) {
+  return Array.from({ length: n }, (_, i) => jourParis(new Date(maintenant.getTime() - (n - 1 - i) * JOUR)));
+}
+
+// La monnaie dans laquelle on a vendu le plus de fois (ventes non remboursées) ; null s'il n'y en a aucune.
+function monnaiePrincipale(ventes) {
+  const nombres = new Map();
+  for (const v of ventes) if (!v.rembourse) nombres.set(v.devise ?? null, (nombres.get(v.devise ?? null) ?? 0) + 1);
+  const [premiere] = [...nombres].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  return premiere ? { devise: premiere[0], autres: nombres.size > 1 } : { devise: null, autres: false };
+}
+
+// Le revenu d'aujourd'hui, des 7 et des 30 derniers jours (jours de Paris), sans les ventes remboursées, dans la monnaie principale.
+export function revenuParPeriode(ventes, maintenant) {
+  const lisibles = Array.isArray(ventes) ? ventes.filter(venteValide) : [];
+  const { devise, autres } = monnaiePrincipale(lisibles);
+  const somme = (jours) => {
+    const ensemble = new Set(jours);
+    const retenues = lisibles.filter((v) => !v.rembourse && (v.devise ?? null) === devise && ensemble.has(jourParis(new Date(v.quand))));
+    return { cents: retenues.reduce((total, v) => total + v.montant_cents, 0), nb: retenues.length };
+  };
+  const trente = derniersJours(maintenant, 30);
+  return {
+    devise: devise ?? null, aujourdhui: somme(trente.slice(-1)), sept: somme(trente.slice(-7)), trente: somme(trente), autresDevises: autres,
+  };
+}
+
+// Un point par jour (« date », « valeur » en centimes), zéro les jours sans vente : pour la courbe du revenu.
+export function courbeRevenu(ventes, maintenant, jours = 30) {
+  const lisibles = Array.isArray(ventes) ? ventes.filter(venteValide) : [];
+  const { devise } = monnaiePrincipale(lisibles);
+  const parJour = new Map();
+  for (const v of lisibles) {
+    if (v.rembourse || (v.devise ?? null) !== devise) continue;
+    const jour = jourParis(new Date(v.quand));
+    parJour.set(jour, (parJour.get(jour) ?? 0) + v.montant_cents);
+  }
+  return derniersJours(maintenant, jours).map((date) => ({ date, valeur: parJour.get(date) ?? 0 }));
+}
+
+// « € » pour EUR, « $ » pour USD, sinon le code ; « € » par défaut (boutique en euros).
+export function symboleDevise(devise) {
+  if (typeof devise !== "string" || !devise) return "€";
+  return devise === "EUR" ? "€" : devise === "USD" ? "$" : devise;
+}
+
+// Où en est la chaîne Telegram de son objectif d'abonnés : { abonnes, objectif, pct, restant } ; null si on ne sait pas.
+export function progressionObjectifTelegram(projets) {
+  const projet = Array.isArray(projets) ? projets.find((p) => p && typeof p === "object" && p.adaptateur === "bot-concours") : null;
+  const canal = objetSur(objetSur(projet && projet.details).canal);
+  if (!estNombre(canal.abonnes) || !estNombre(canal.objectif) || canal.objectif <= 0) return null;
+  return { abonnes: canal.abonnes, objectif: canal.objectif, pct: pourcentageQuota(canal.abonnes, canal.objectif), restant: Math.max(0, canal.objectif - canal.abonnes) };
+}
+
+// Ce qui a changé sur `jours` jours d'après une courbe de points { date, valeur } : { gain, depuis } ; null s'il y a moins de deux points lisibles.
+export function gainSurPeriode(courbe, maintenant, jours) {
+  const points = Array.isArray(courbe)
+    ? courbe.filter((p) => p && typeof p === "object" && typeof p.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && estNombre(p.valeur))
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    : [];
+  if (points.length < 2) return null;
+  const limite = jourParis(new Date(maintenant.getTime() - jours * JOUR));
+  const fin = points[points.length - 1];
+  const debut = [...points].reverse().find((p) => p.date <= limite && p !== fin) ?? points[0];
+  return { gain: fin.valeur - debut.valeur, depuis: debut.date };
+}
+
+// Le bilan des 7 derniers jours : abonnés Telegram et TikTok gagnés, vues TikTok, concours publiés, ventes et revenu. null pour ce qu'on ne sait pas.
+export function bilanSemaine(projets, maintenant) {
+  const liste = Array.isArray(projets) ? projets.filter((p) => p && typeof p === "object") : [];
+  const details = (adaptateur) => liste.filter((p) => p.adaptateur === adaptateur).map((p) => objetSur(p.details));
+  const bot = details("bot-concours")[0];
+  const sommeDesGains = (cle) => {
+    const gains = details("tiktok").flatMap((d) => listeSure(d.comptes)).map((c) => gainSurPeriode(c[cle], maintenant, 7)).filter(Boolean);
+    return gains.length > 0 ? gains.reduce((total, g) => total + g.gain, 0) : null;
+  };
+  const gumroad = details("gumroad")[0];
+  let ventes7j = null;
+  if (gumroad && Array.isArray(gumroad.ventes)) {
+    const { devise, sept } = revenuParPeriode(gumroad.ventes, maintenant);
+    ventes7j = { nb: sept.nb, cents: sept.cents, devise };
+  }
+  return {
+    telegram: bot ? gainSurPeriode(objetSur(bot.canal).courbe, maintenant, 7) : null,
+    tiktokAbonnes: sommeDesGains("courbe"), tiktokVues: sommeDesGains("courbe_vues"),
+    publies7j: bot && estNombre(objetSur(bot.compteurs).publies_7j) ? bot.compteurs.publies_7j : null,
+    ventes7j,
+  };
 }

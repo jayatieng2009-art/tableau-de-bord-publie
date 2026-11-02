@@ -6,7 +6,7 @@ import {
   lienSur, lienVideo, lienAnalytiquesVideo, lienAnalytiquesChaine, lienStudio, lienChaine, lienDirect,
   actionAffichee, attenteTerminee, messageApresConfirmation,
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
-  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, estRappelDeDecision, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, lienGumroad, lienTiktok,
+  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, libelleFin, plateformesDeLaPile, groupesDeRefus, statsConcours, estRappelDeDecision, ventesRecentes, revenuParPeriode, courbeRevenu, symboleDevise, progressionObjectifTelegram, bilanSemaine, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, messagePcEteint, distanceTiree, doitActualiser, historiqueDesOrdres, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
@@ -60,10 +60,17 @@ function carteProjet(projet) {
     const details = projet.details ?? {};
     const commit = details.dernier_commit ?? {};
     const liste = el("dl");
-    ligneDetail(liste, "Branche", details.branche ?? "?");
-    ligneDetail(liste, "Dernier commit", commit.sujet ?? "?");
-    ligneDetail(liste, "Date du commit", commit.date ? dateLocale(commit.date) : "?");
-    ligneDetail(liste, "Modifications non validées", String(details.modifications_non_validees ?? "?"));
+    if (details.type === "dossier") {
+      // Un dossier sans dépôt git : la date de sa dernière modification et le nombre de fichiers (jamais leur contenu).
+      const quand = typeof details.derniere_modification === "string" ? details.derniere_modification : null;
+      ligneDetail(liste, "Dernière modification", quand ? `${dateLocale(quand)} (${ageLisible(quand, new Date())})` : "aucun fichier");
+      ligneDetail(liste, "Fichiers", `${formaterNombre(details.nb_fichiers)}${details.tronque === true ? " ou plus" : ""}`);
+    } else {
+      ligneDetail(liste, "Branche", details.branche ?? "?");
+      ligneDetail(liste, "Dernier commit", commit.sujet ?? "?");
+      ligneDetail(liste, "Date du commit", commit.date ? dateLocale(commit.date) : "?");
+      ligneDetail(liste, "Modifications non validées", String(details.modifications_non_validees ?? "?"));
+    }
     carte.append(liste);
   } else if (projet.message) {
     carte.append(el("p", "discret", projet.message));
@@ -323,7 +330,13 @@ function dessinerCommandes(zone, etat, actions) {
   }
 }
 
+let historiqueOrdres = []; // les derniers ordres traités (tickets fermés), pour l'accueil
 let liveEnAttente = new Set(); // « couper » / « lancer » : ordres du live déjà donnés (tickets ouverts), relus à chaque affichage
+const COMMANDE_VERROU_LIVE = {
+  action: "verrou", libelle: "Verrouiller les commandes (urgence)",
+  avertissement: "Désactive les boutons Lancer et Couper de CETTE page en ligne, tant que vous n'aurez pas supprimé le fichier commandes_live_verrouillees.txt "
+    + "du dossier data_local sur le PC. L'adresse privée n'est pas touchée. À utiliser si vous pensez que quelqu'un d'autre connaît le mot de passe.",
+};
 const DELAI_SUIVI_ORDRE_MS = 5000;
 const DUREE_SUIVI_ORDRE_MS = 150000;
 
@@ -363,18 +376,27 @@ function dessinerCommandesEnLigne(zone, enCours, maintenant) {
   zone.replaceChildren(entete, message, emplacement);
   const genere = chargeEnLigne && chargeEnLigne.paquet ? chargeEnLigne.paquet.genere_a : null;
   emplacement.append(el("p", "discret", `Le PC (allumé) exécute l'ordre dans la minute. État du direct d'après le relevé ${genere ? ageLisible(genere, maintenant) : "(date inconnue)"}.`));
+  if (chargeEnLigne && chargeEnLigne.commandes_live_verrouillees === true) {
+    emplacement.append(el("p", "alerte alerte-avertissement",
+      "Commandes du live en ligne verrouillées. Pour les rouvrir, supprimez le fichier commandes_live_verrouillees.txt du dossier data_local sur le PC. L'adresse privée garde ses boutons."));
+    return;
+  }
   if (liveEnAttente.size > 0) {
     emplacement.append(el("p", "alerte alerte-avertissement", `Ordre déjà donné (${[...liveEnAttente].join(", ")}) : le PC l'exécute dans la minute.`));
     return;
   }
   if (!commande) {
     emplacement.append(el("p", "discret", "L'état du direct est inconnu : commandes désactivées."));
+    const verrouSeul = bouton(COMMANDE_VERROU_LIVE.libelle, "bouton-secondaire", () => demander(COMMANDE_VERROU_LIVE, verrouSeul));
+    emplacement.append(verrouSeul);
     return;
   }
-  const principal = bouton(commande.libelle, commande.danger ? "bouton-danger" : "bouton-principal", demander);
+  const principal = bouton(commande.libelle, commande.danger ? "bouton-danger" : "bouton-principal", () => demander(commande, principal));
   emplacement.append(principal);
+  const verrou = bouton(COMMANDE_VERROU_LIVE.libelle, "bouton-secondaire", () => demander(COMMANDE_VERROU_LIVE, verrou));
+  emplacement.append(verrou);
 
-  function demander() {
+  function demander(commande, principal) {
     principal.disabled = true;
     let restant = 30;
     const compte = el("p", "discret cmd-compte", `Expire dans ${restant} s`);
@@ -412,7 +434,7 @@ function dessinerCommandesEnLigne(zone, enCours, maintenant) {
       ecrireMessage(message, "J'attends la réponse du PC…", "info");
       const texte = await attendreReponseDuPc(reponse.json.numero);
       dernierResultat = texte
-        ? { texte, reussi: /^Exécuté/.test(texte) }
+        ? { texte, reussi: /^(Exécuté|Verrouillé)/.test(texte) }
         : { texte: "Pas de réponse du PC pour l'instant (est-il allumé ?). Sans réponse dans les 10 minutes, l'ordre sera ignoré.", reussi: false };
       await charger();
     });
@@ -704,8 +726,16 @@ async function lireOrdresEnAttenteGithub() {
     liveEnAttente = new Set(actionsLiveEnAttente(tickets));
     for (const t of Array.isArray(tickets) ? tickets : []) {
       const trouve = t && typeof t.title === "string" ? /^(ok|no)_([0-9a-f]{10})$/.exec(t.title) : null;
-      if (trouve) ordresEnvoyes.set(trouve[2], trouve[1]);
+      if (trouve) {
+        ordresEnvoyes.set(trouve[2], trouve[1]);
+        if (Number.isInteger(t.number)) numerosOrdres.set(trouve[2], t.number);
+      }
     }
+    const fermes = await fetch(
+      `https://api.github.com/repos/${depotConcours}/issues?state=closed&creator=${encodeURIComponent(depotConcours.split("/")[0])}&per_page=30&sort=updated&direction=desc`,
+      { headers: enTetesGithub(jeton), cache: "no-store" },
+    );
+    if (fermes.ok) historiqueOrdres = historiqueDesOrdres(await fermes.json(), 10);
   } catch {
     // sans cette lecture, les boutons marchent quand même (le doublon est refusé à l'envoi)
   }
@@ -825,6 +855,7 @@ function zoneDecision(c, options = {}) {
         dessiner();
         return;
       }
+      if (EN_LIGNE && reponse.json && Number.isInteger(reponse.json.numero)) numerosOrdres.set(c.code, reponse.json.numero);
       ordresEnvoyes.set(c.code, action);
       ecrireMessage(message, `Ordre envoyé : le bot l'appliquera à son prochain passage${textePassage()}.`, "ok");
       dessiner();
@@ -852,20 +883,196 @@ function zoneDecision(c, options = {}) {
 
 const reportesConcours = []; // codes passés « pour plus tard » : renvoyés au bout de la pile (jusqu'au rechargement de la page)
 let confirmationPile = null; // texte de la dernière décision envoyée, montré au-dessus du concours suivant
+let dernierOrdre = null; // { code } : le dernier ordre donné ici, que « Annuler cet ordre » peut reprendre (page en ligne seulement)
+let filtreConcours = {}; // { plateforme, urgent } : ce que la pile montre
+const numerosOrdres = new Map(); // code de carte -> numéro du ticket de son ordre (page en ligne) : pour reprendre une décision
+const PAUSE_ENTRE_ORDRES_MS = 1200; // GitHub limite les créations de tickets trop rapprochées
 
-// Les concours à décider, un par un : le lot en grand, deux gros boutons, « Passer » pour y revenir plus tard.
+// Reprendre une décision pas encore appliquée : on ferme son ticket, le bot ne le verra plus. Trop tard si le bot l'a déjà fermé.
+async function reprendreDecision(code) {
+  const jeton = lireJetonGithub();
+  const numero = numerosOrdres.get(code);
+  if (!jeton || !depotConcours || !Number.isInteger(numero)) return { ok: false, erreur: "Impossible de reprendre cette décision d'ici." };
+  const base = `https://api.github.com/repos/${depotConcours}/issues/${numero}`;
+  try {
+    const ticket = await fetch(base, { headers: enTetesGithub(jeton), cache: "no-store" });
+    if (!ticket.ok) return { ok: false, erreur: messageErreurGithub(ticket.status) };
+    if ((await ticket.json()).state !== "open") return { ok: false, erreur: "Trop tard : le bot a déjà appliqué cette décision." };
+    const reponse = await fetch(base, {
+      method: "PATCH", headers: { ...enTetesGithub(jeton), "Content-Type": "application/json" },
+      body: JSON.stringify({ state: "closed", state_reason: "not_planned" }),
+    });
+    if (!reponse.ok) return { ok: false, erreur: messageErreurGithub(reponse.status) };
+  } catch {
+    return { ok: false, erreur: "GitHub est injoignable : réessaie dans un moment." };
+  }
+  ordresEnvoyes.delete(code);
+  numerosOrdres.delete(code);
+  return { ok: true };
+}
+
+// Refuse plusieurs concours d'un coup (page en ligne) : un ticket par concours, avec une pause entre deux ; s'arrête au premier refus de GitHub.
+async function refuserEnLot(codes, progression) {
+  const jeton = lireJetonGithub();
+  if (!jeton || !depotConcours) return { envoyes: 0, ignores: 0, erreur: "Aucune clé GitHub n'est enregistrée sur cet appareil." };
+  const base = `https://api.github.com/repos/${depotConcours}/issues`;
+  let dejaOuverts;
+  try {
+    const liste = await fetch(`${base}?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
+    if (!liste.ok) return { envoyes: 0, ignores: 0, erreur: messageErreurGithub(liste.status) };
+    const tickets = await liste.json();
+    dejaOuverts = new Set((Array.isArray(tickets) ? tickets : []).map((t) => t && t.title).filter(Boolean));
+  } catch {
+    return { envoyes: 0, ignores: 0, erreur: "GitHub est injoignable : réessaie dans un moment." };
+  }
+  let envoyes = 0;
+  let ignores = 0;
+  for (const code of codes) {
+    if (!/^[0-9a-f]{10}$/.test(code) || dejaOuverts.has(`ok_${code}`) || dejaOuverts.has(`no_${code}`)) {
+      ignores += 1;
+      continue;
+    }
+    progression(envoyes + ignores, codes.length);
+    try {
+      const reponse = await fetch(base, {
+        method: "POST", headers: { ...enTetesGithub(jeton), "Content-Type": "application/json" },
+        body: JSON.stringify({ title: `no_${code}`, body: "Ordre donné depuis la page en ligne du tableau de bord (refus en lot)." }),
+      });
+      if (reponse.status !== 201) return { envoyes, ignores, erreur: messageErreurGithub(reponse.status) };
+      ordresEnvoyes.set(code, "no");
+      try {
+        numerosOrdres.set(code, (await reponse.json()).number);
+      } catch {
+        // sans numéro, seul « Reprendre » est indisponible pour ce concours
+      }
+      envoyes += 1;
+    } catch {
+      return { envoyes, ignores, erreur: "GitHub est injoignable : réessaie dans un moment." };
+    }
+    await pause(PAUSE_ENTRE_ORDRES_MS);
+  }
+  return { envoyes, ignores, erreur: null };
+}
+
+// Les concours à décider, un par un : le lot en grand, deux gros boutons, « Passer » pour y revenir plus tard,
+// des filtres (plateforme, fin proche) et, sur la page en ligne, un refus en lot.
 function pileConcours(cartes, maintenant) {
   const zone = el("section", "pile");
   zone.setAttribute("aria-label", "Concours à décider");
+  let panneauLot = false; // le panneau « Refuser en lot » est-il ouvert ?
+  const filtreActif = () => Boolean(filtreConcours.plateforme) || filtreConcours.urgent === true;
+
+  function puce(libelle, actif, auClic) {
+    const b = el("button", actif ? "puce puce-active" : "puce", libelle);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(actif));
+    b.addEventListener("click", auClic);
+    return b;
+  }
+
+  function blocConfirmation() {
+    const bloc = el("div", "pile-confirmation");
+    bloc.append(el("span", "", confirmationPile));
+    if (EN_LIGNE && dernierOrdre && numerosOrdres.has(dernierOrdre.code)) {
+      const { code } = dernierOrdre;
+      bloc.append(bouton("Annuler cet ordre", "bouton-secondaire", async () => {
+        const reprise = await reprendreDecision(code);
+        confirmationPile = reprise.ok ? "Décision annulée : le concours revient dans la pile." : reprise.erreur;
+        dernierOrdre = null;
+        dessiner();
+      }));
+    }
+    return bloc;
+  }
+
+  function panneauDeLots(groupes) {
+    const panneau = el("div", "pile-lots");
+    const message = el("p", "cmd-message");
+    message.setAttribute("role", "status");
+    const choisir = () => {
+      panneau.replaceChildren(el("p", "cmd-titre", "Refuser en lot"), ...groupes.map((g) => bouton(g.libelle, "bouton-secondaire", () => confirmer(g))),
+        bouton("Fermer", "bouton-secondaire", () => {
+          panneauLot = false;
+          dessiner();
+        }), message);
+    };
+    const confirmer = (groupe) => {
+      const n = groupe.codes.length;
+      confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant l'envoi
+      let ferme = false;
+      const fermer = () => {
+        if (ferme) return;
+        ferme = true;
+        confirmationsOuvertes -= 1;
+      };
+      const oui = bouton("Confirmer", "bouton-danger", async () => {
+        oui.disabled = true;
+        non.disabled = true;
+        const resultat = await refuserEnLot(groupe.codes, (fait) => ecrireMessage(message, `Envoi en cours : ${fait} sur ${n}…`, "info"));
+        fermer();
+        panneauLot = false;
+        dernierOrdre = null;
+        confirmationPile = resultat.erreur
+          ? `${resultat.envoyes} refus envoyés, puis arrêt : ${resultat.erreur}`
+          : `${resultat.envoyes} refus envoyés${resultat.ignores > 0 ? ` (${resultat.ignores} déjà en attente)` : ""} : le bot les appliquera à son prochain passage${textePassage()}.`;
+        dessiner();
+      });
+      const non = bouton("Annuler", "bouton-secondaire", () => {
+        fermer();
+        choisir();
+      });
+      panneau.replaceChildren(
+        el("p", "cmd-titre", `Refuser ${n} concours ?`),
+        el("p", "cmd-avertissement", `${groupe.libelle} : le bot les oubliera pour de bon à son prochain passage. L'envoi se fait un par un, avec une courte pause : comptez environ ${Math.ceil((n * (PAUSE_ENTRE_ORDRES_MS + 300)) / 1000)} s.`),
+        groupeDeLiens("cmd-actions", oui, non), message,
+      );
+    };
+    choisir();
+    return panneau;
+  }
 
   function dessiner() {
-    const pile = pileDeConcours(cartes, { maintenant, masques: new Set(ordresEnvoyes.keys()), reportes: reportesConcours });
+    const options = { maintenant, masques: new Set(ordresEnvoyes.keys()), reportes: reportesConcours };
+    const toute = pileDeConcours(cartes, options);
+    const pile = pileDeConcours(cartes, { ...options, filtre: filtreConcours });
     const entete = el("div", "pile-entete");
-    entete.append(el("h3", "", "À décider"), pile.length > 0 ? el("span", "badge-compteur", `${pile.length} à décider`) : el("span", "badge-ok", "Tout est décidé"));
+    entete.append(
+      el("h3", "", "À décider"),
+      toute.length > 0 ? el("span", "badge-compteur", filtreActif() ? `${pile.length} sur ${toute.length}` : `${toute.length} à décider`) : el("span", "badge-ok", "Tout est décidé"),
+    );
     const noeuds = [entete];
-    if (confirmationPile) noeuds.push(el("p", "pile-confirmation", confirmationPile));
-    if (pile.length === 0) {
+    if (confirmationPile) noeuds.push(blocConfirmation());
+    if (toute.length === 0) {
       noeuds.push(el("p", "discret pile-vide", "Plus aucun concours à décider. Le bot en ajoute de nouveaux à chaque passage."));
+      zone.replaceChildren(...noeuds);
+      return;
+    }
+    const plateformes = plateformesDeLaPile(cartes, maintenant, options.masques);
+    const finProche = toute.some((x) => libelleFin(x.fin, maintenant).urgent);
+    if (plateformes.length >= 2 || finProche || filtreActif()) {
+      const filtres = el("div", "filtres");
+      filtres.append(puce("Tout", !filtreActif(), () => {
+        filtreConcours = {};
+        dessiner();
+      }));
+      if (plateformes.length >= 2 || filtreConcours.plateforme) {
+        for (const p of plateformes) {
+          filtres.append(puce(`${p.nom} (${p.n})`, filtreConcours.plateforme === p.nom, () => {
+            filtreConcours = { ...filtreConcours, plateforme: filtreConcours.plateforme === p.nom ? null : p.nom };
+            dessiner();
+          }));
+        }
+      }
+      if (finProche || filtreConcours.urgent === true) {
+        filtres.append(puce("Fin proche", filtreConcours.urgent === true, () => {
+          filtreConcours = { ...filtreConcours, urgent: !filtreConcours.urgent };
+          dessiner();
+        }));
+      }
+      noeuds.push(filtres);
+    }
+    if (pile.length === 0) {
+      noeuds.push(el("p", "discret pile-vide", "Aucun concours ne correspond à ce filtre."));
       zone.replaceChildren(...noeuds);
       return;
     }
@@ -881,6 +1088,7 @@ function pileConcours(cartes, maintenant) {
     noeuds.push(zoneDecision(c, {
       grand: true,
       apres: (action) => {
+        dernierOrdre = { code: c.code };
         confirmationPile = `${action === "ok" ? "Publication" : "Refus"} envoyé pour « ${p.titre} » : le bot l'appliquera à son prochain passage${textePassage()}.`;
         dessiner();
       },
@@ -898,6 +1106,15 @@ function pileConcours(cartes, maintenant) {
         confirmationPile = null;
         dessiner();
       }));
+    }
+    if (EN_LIGNE && decisionsDisponibles) {
+      const groupes = groupesDeRefus(toute, maintenant);
+      if (groupes.length > 0) {
+        noeuds.push(panneauLot ? panneauDeLots(groupes) : bouton("Refuser en lot…", "bouton-secondaire pile-lot", () => {
+          panneauLot = true;
+          dessiner();
+        }));
+      }
     }
     zone.replaceChildren(...noeuds);
   }
@@ -957,7 +1174,14 @@ function carteConcours(projet, maintenant) {
   if (enAttente.length > 0) {
     plus.push(sectionFp(`Décidés, en attente du bot (${enAttente.length})`, false, listeFp(enAttente.map((c) => {
       const ordre = c.ordre === "ok" || c.ordre === "no" ? c.ordre : ordresEnvoyes.get(c.code);
-      return ligneFp(presenterConcours(c, maintenant).titre, libelleOrdre(ordre) ?? "Accepté : publication au prochain passage");
+      const reprendre = EN_LIGNE && numerosOrdres.has(c.code)
+        ? groupeDeLiens("fp-liens", bouton("Reprendre", "bouton-secondaire", async () => {
+          const reprise = await reprendreDecision(c.code);
+          confirmationPile = reprise.ok ? "Décision annulée : le concours revient dans la pile." : reprise.erreur;
+          await charger();
+        }))
+        : null;
+      return ligneFp(presenterConcours(c, maintenant).titre, libelleOrdre(ordre) ?? "Accepté : publication au prochain passage", reprendre);
     }), "")));
   }
   const reste = Number(compteurs.cartes) - cartes.length;
@@ -966,6 +1190,17 @@ function carteConcours(projet, maintenant) {
   // Sans clé GitHub, les boutons de la page en ligne ne marchent pas : la section reste visible. Avec la clé, elle se range dans les détails.
   if (EN_LIGNE && !lireJetonGithub()) carte.append(sectionCleGithub());
   else if (EN_LIGNE) plus.push(sectionCleGithub());
+  const bilan = statsConcours(d, maintenant);
+  const enumerer = (elements) => (elements.length > 0 ? elements.map((e) => `${e.nom} ${e.n}`).join(" · ") : "aucun");
+  plus.push(sectionFp("Statistiques", false, listeFp([
+    ligneFp("À décider", `${bilan.aDecider}${bilan.termines > 0 ? ` (dont ${bilan.termines} terminés)` : ""} · ${enumerer(bilan.parPlateformeADecider)}`),
+    ligneFp(`Derniers publiés (${bilan.publiesRecents})`, enumerer(bilan.publiesParPlateforme)),
+    ligneFp("Publiés", [
+      bilan.publies7j !== null ? `${bilan.publies7j} sur 7 jours` : null,
+      bilan.publiesTotal !== null ? `${bilan.publiesTotal} au total` : null,
+      bilan.refus !== null ? `${bilan.refus} refusés` : null,
+    ].filter(Boolean).join(" · ") || "inconnu"),
+  ], "")));
   plus.push(sectionFp("Outils et liens", false, outils));
 
   // Le suivi de l'objectif et les détails du bot, repliés : on les ouvre seulement quand on en a besoin.
@@ -1275,12 +1510,20 @@ function carteTiktok(projet, maintenant) {
     plus.push(el("p", "discret", `Lecture publique, sans connexion : ${lues} vidéo(s) lue(s) sur ${publiques.suivies} suivies`
       + `${typeof publiques.maj === "string" ? `, dernière lecture ${ageLisible(publiques.maj, maintenant)}` : ""}. Chaque vidéo est relue toutes les 6 heures.`));
   }
-  if (Number(exports.nb_fichiers) > 0) {
+  if (Number(exports.nb_videos) > 0) {
     const tuiles = el("div", "grosses-tuiles");
     tuiles.append(
       grosseTuile({ ton: "accent", valeur: formaterNombre(exports.total_vues), libelle: "vues (exports)", detail: `${formaterNombre(exports.nb_videos)} vidéos suivies` }, "👀"),
     );
     carte.append(tuiles, palmares("Vidéos les plus vues (exports)", liste(exports.videos), ligneExport, "Aucune vidéo dans les exports."));
+  }
+  const serieExport = liste(exports.serie_jours).filter((p) => typeof p.date === "string" && Number.isFinite(p.vues));
+  if (serieExport.length >= 2) {
+    plus.push(sectionFp(
+      `Vues par jour, export de TikTok Studio (${serieExport.length} jours)`, false,
+      blocCourbe("Vues par jour", serieExport.map((p) => ({ date: p.date, valeur: p.vues })), "valeur"),
+      el("p", "discret", `${formaterNombre(exports.total_vues_jours)} vues sur la période.`),
+    ));
   }
   plus.push(
     groupeDeLiens(
@@ -1404,6 +1647,31 @@ function carteRevenus(etat) {
 
 // ---------- Boutique : produits, ventes et revenus au même endroit ----------
 
+// Le revenu par période, sa courbe sur 30 jours et les dernières ventes (Gumroad).
+function blocVentes(ventes, maintenant) {
+  const bloc = el("div", "bloc-ventes");
+  if (!Array.isArray(ventes)) {
+    bloc.append(el("p", "alerte alerte-info", "Le détail des ventes est indisponible pour le moment."));
+    return bloc;
+  }
+  const revenu = revenuParPeriode(ventes, maintenant);
+  const symbole = symboleDevise(revenu.devise);
+  const chiffres = el("div", "fp-chiffres");
+  const periode = (nom, p) => tuileTexte(nom, formaterMontant(p.cents, symbole), `${p.nb} vente${p.nb > 1 ? "s" : ""}`);
+  chiffres.append(periode("Aujourd'hui", revenu.aujourdhui), periode("7 jours", revenu.sept), periode("30 jours", revenu.trente));
+  bloc.append(el("p", "cmd-titre", "Revenu"), chiffres);
+  if (revenu.autresDevises) bloc.append(el("p", "discret", "Les ventes faites dans une autre monnaie ne sont pas comptées ici."));
+  if (revenu.trente.nb > 0) {
+    bloc.append(blocCourbe(`Revenu des 30 derniers jours (en ${symbole})`, courbeRevenu(ventes, maintenant, 30).map((p) => ({ date: p.date, valeur: p.valeur / 100 })), "valeur"));
+  }
+  const recentes = ventesRecentes(ventes, 5);
+  bloc.append(sectionFp(`Dernières ventes (${recentes.length})`, recentes.length > 0, listeFp(
+    recentes.map((v) => ligneFp(`${formaterMontant(v.montant_cents, symboleDevise(v.devise))} · ${abreger(v.produit, 70)}`, `${ageLisible(v.quand, maintenant)}${v.rembourse ? " · remboursée" : ""}`)),
+    "Aucune vente sur les 35 derniers jours.",
+  )));
+  return bloc;
+}
+
 function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
   const carte = el("article", "carte carte-large");
   const entete = el("div", "fp-entete");
@@ -1439,6 +1707,8 @@ function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
     carte.append(el("p", `alerte alerte-${aVerifier.niveau === "erreur" ? "erreur" : "avertissement"}`,
       `${aVerifier.nb > 1 ? `${aVerifier.nb} points à vérifier, dont : ` : ""}${aVerifier.texte}`));
   }
+
+  if (gumroad && g.etat === "ok") carte.append(blocVentes(g.ventes, maintenant));
 
   if (catalogue.length > 0) {
     const grille = el("div", "produits-mini");
@@ -1502,6 +1772,37 @@ function blocAccueil(projets, etat, maintenant) {
         "",
       )));
     }
+  }
+  const objectif = progressionObjectifTelegram(projets);
+  if (objectif) {
+    const barre = document.createElement("progress");
+    barre.max = 100;
+    barre.value = objectif.pct;
+    barre.setAttribute("aria-label", "Progression vers l'objectif d'abonnés Telegram");
+    carte.append(
+      el("p", "accueil-rdv", `Objectif Telegram : ${formaterNombre(objectif.abonnes)} sur ${formaterNombre(objectif.objectif)} abonnés (${objectif.pct} %), il en reste ${formaterNombre(objectif.restant)}.`),
+      barre,
+    );
+  }
+  const bilan = bilanSemaine(projets, maintenant);
+  const signe = (n) => variation(n, 0).texte;
+  const lignesBilan = [];
+  if (bilan.telegram) {
+    lignesBilan.push(ligneFp("Telegram", `${signe(bilan.telegram.gain)} abonnés depuis le ${bilan.telegram.depuis.slice(8, 10)}/${bilan.telegram.depuis.slice(5, 7)}`));
+  }
+  if (bilan.tiktokAbonnes !== null || bilan.tiktokVues !== null) {
+    lignesBilan.push(ligneFp("TikTok", [bilan.tiktokAbonnes !== null ? `${signe(bilan.tiktokAbonnes)} abonnés` : null, bilan.tiktokVues !== null ? `${signe(bilan.tiktokVues)} vues` : null].filter(Boolean).join(" · ")));
+  }
+  if (bilan.publies7j !== null) lignesBilan.push(ligneFp("Concours", `${bilan.publies7j} publiés sur 7 jours`));
+  if (bilan.ventes7j) {
+    lignesBilan.push(ligneFp("Boutique", `${bilan.ventes7j.nb} vente${bilan.ventes7j.nb > 1 ? "s" : ""} · ${formaterMontant(bilan.ventes7j.cents, symboleDevise(bilan.ventes7j.devise))}`));
+  }
+  if (lignesBilan.length > 0) carte.append(sectionFp("Bilan de la semaine", false, listeFp(lignesBilan, "")));
+  if (EN_LIGNE && historiqueOrdres.length > 0) {
+    carte.append(sectionFp(`Derniers ordres (${historiqueOrdres.length})`, false, listeFp(
+      historiqueOrdres.map((o) => ligneFp(`${o.icone} ${o.texte}`, ageLisible(o.quand, maintenant))),
+      "",
+    )));
   }
   section.append(carte);
   return section;
@@ -1666,7 +1967,8 @@ function afficher(paquet) {
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);
   }
-  const noeuds = [...peremptions];
+  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant) : null;
+  const noeuds = [...(pcEteint ? [el("p", "avertissement", pcEteint)] : []), ...peremptions];
   if (onglets.length === 0) {
     noeuds.push(el("p", "discret", "Aucun projet dans ce relevé."));
   } else if (onglets.length === 1) {
@@ -1849,6 +2151,37 @@ async function charger() {
   }
 }
 
+// Tirer la page vers le bas, tout en haut, l'actualise (comme dans une appli).
+function installerTirerPourActualiser() {
+  const bandeau = el("div", "tirer");
+  bandeau.setAttribute("aria-hidden", "true");
+  document.body.append(bandeau);
+  let depart = null;
+  let distance = 0;
+  const reinitialiser = () => {
+    depart = null;
+    distance = 0;
+    bandeau.dataset.etat = "";
+  };
+  document.addEventListener("touchstart", (e) => {
+    depart = e.touches.length === 1 ? e.touches[0].clientY : null;
+    distance = 0;
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (depart === null || e.touches.length !== 1) return;
+    distance = distanceTiree(depart, e.touches[0].clientY, window.scrollY);
+    bandeau.dataset.etat = distance === 0 ? "" : doitActualiser(distance) ? "relacher" : "tirer";
+    bandeau.textContent = doitActualiser(distance) ? "Relâchez pour actualiser" : distance > 0 ? "Tirez pour actualiser" : "";
+  }, { passive: true });
+  document.addEventListener("touchend", () => {
+    const actualiser = doitActualiser(distance);
+    reinitialiser();
+    if (actualiser) charger();
+  }, { passive: true });
+  document.addEventListener("touchcancel", reinitialiser, { passive: true });
+}
+
+installerTirerPourActualiser();
 charger();
 // Rafraîchissement automatique, sauf pendant une confirmation ou quand l'onglet est caché.
 setInterval(() => {

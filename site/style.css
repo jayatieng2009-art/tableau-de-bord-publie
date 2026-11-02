@@ -281,3 +281,23 @@ a.produit-mini:hover { border-color: var(--accent); }
 .verrou input[type="password"] { min-height: 48px; padding: 0 12px; border: 1px solid var(--bordure); border-radius: 8px; background: var(--fond); color: var(--texte); font: inherit; }
 .verrou-souvenir { display: flex; align-items: center; gap: 8px; }
 .verrou-souvenir input { width: 22px; height: 22px; }
+
+/* ---------- Tirer pour actualiser ---------- */
+.tirer {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30; padding: 10px; text-align: center; pointer-events: none;
+  background: var(--accent-fond); color: var(--accent-fort); font-weight: 700; transform: translateY(-100%); transition: transform 0.15s;
+}
+.tirer[data-etat="tirer"], .tirer[data-etat="relacher"] { transform: translateY(0); }
+.tirer[data-etat="relacher"] { background: var(--ok-fond); color: var(--ok-texte); }
+
+/* ---------- Concours : filtres, lot de refus, annulation ---------- */
+.filtres { display: flex; gap: 8px; overflow-x: auto; margin: 0 0 10px; padding-bottom: 2px; scrollbar-width: none; }
+.filtres::-webkit-scrollbar { display: none; }
+.puce {
+  flex: 0 0 auto; min-height: 36px; padding: 0 12px; border: 1px solid var(--bordure); border-radius: 999px; background: var(--carte);
+  color: var(--texte); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer;
+}
+.puce-active { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.pile-confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pile-lots { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid var(--bordure); border-radius: 12px; }
+.pile-lot { display: block; margin: 12px auto 0; }
