@@ -732,11 +732,54 @@ export function dureeLisible(ms) {
 
 const SEUIL_PC_ETEINT = 90 * MINUTE;
 
+const FORMAT_HEURE_PARIS = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
+
 // Un avertissement quand la page en ligne n'a rien reçu du PC depuis plus de 90 minutes (le PC publie toutes les 30 minutes quand il est allumé) ; null sinon.
-export function messagePcEteint(publieA, maintenant) {
+// `cloudA` : l'heure du dernier relevé du robot GitHub ; s'il est plus récent que la publication du PC, le bandeau dit que les abonnés Telegram sont à jour.
+export function messagePcEteint(publieA, maintenant, cloudA) {
   const ecoule = typeof publieA === "string" ? maintenant.getTime() - Date.parse(publieA) : NaN;
   if (!Number.isFinite(ecoule) || ecoule <= SEUIL_PC_ETEINT) return null;
-  return `Le PC n'a rien publié depuis ${dureeLisible(ecoule)} : il est probablement éteint. Les ✅ / ❌ des concours marchent quand même (le bot les applique), mais les ordres du live attendent le PC.`;
+  const relevé = typeof cloudA === "string" ? Date.parse(cloudA) : NaN;
+  const suite = Number.isFinite(relevé) && relevé > Date.parse(publieA) ? ` Les abonnés Telegram sont à jour : relevés par GitHub à ${FORMAT_HEURE_PARIS.format(new Date(relevé))}.` : "";
+  return `Le PC n'a rien publié depuis ${dureeLisible(ecoule)} : il est probablement éteint. Les ✅ / ❌ des concours marchent quand même (le bot les applique), mais les ordres du live attendent le PC.${suite}`;
+}
+
+const PUBLICATIONS_CLOUD_MAX = 10;
+
+function publicationsDuCloud(liste) {
+  return (Array.isArray(liste) ? liste : [])
+    .filter((p) => p && typeof p === "object" && Number.isInteger(p.id))
+    .slice(0, PUBLICATIONS_CLOUD_MAX)
+    .map((p) => ({ id: p.id, vues: estNombre(p.vues) ? p.vues : null, quand: typeof p.quand === "string" ? p.quand : null, texte: typeof p.texte === "string" ? p.texte.slice(0, 150) : "" }));
+}
+
+// Quand le PC est éteint (rien publié depuis plus de 90 minutes) et que le robot GitHub (deployer.yml) a relevé les chiffres publics plus récemment :
+// une COPIE de la charge où le nombre d'abonnés et les dernières publications du canal Telegram sont ceux du robot. La charge d'origine n'est jamais
+// modifiée ; si rien ne s'applique (relevé absent, abîmé, plus ancien, autre canal), c'est la même charge qui revient.
+export function fusionnerReleveCloud(charge, cloud, maintenant) {
+  if (!charge || typeof charge !== "object" || Array.isArray(charge) || !(maintenant instanceof Date)) return charge;
+  const publieA = Date.parse(charge.publie_a);
+  const releveA = cloud && typeof cloud === "object" ? Date.parse(cloud.releve_a) : NaN;
+  if (!Number.isFinite(publieA) || !Number.isFinite(releveA) || releveA <= publieA || maintenant.getTime() - publieA <= SEUIL_PC_ETEINT) return charge;
+  const canaux = objetSur(cloud.canaux);
+  const copie = JSON.parse(JSON.stringify(charge));
+  let applique = false;
+  for (const releve of Object.values(objetSur(objetSur(copie.paquet).releves))) {
+    for (const projet of releve && Array.isArray(releve.projets) ? releve.projets : []) {
+      if (!projet || projet.adaptateur !== "bot-concours") continue;
+      const canal = objetSur(objetSur(projet.details).canal);
+      if (typeof canal.nom !== "string") continue;
+      const cle = Object.keys(canaux).find((nom) => nom.toLowerCase() === canal.nom.toLowerCase());
+      const relevé = cle ? objetSur(canaux[cle]) : null;
+      if (!relevé || !Number.isInteger(relevé.abonnes) || relevé.abonnes < 0) continue;
+      canal.abonnes = relevé.abonnes;
+      canal.publications = publicationsDuCloud(relevé.publications);
+      applique = true;
+    }
+  }
+  if (!applique) return charge;
+  copie.cloud_a = cloud.releve_a;
+  return copie;
 }
 
 export const SEUIL_TIRER = 70;

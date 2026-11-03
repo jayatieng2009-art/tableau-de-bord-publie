@@ -6,7 +6,7 @@ import {
   lienSur, lienVideo, lienAnalytiquesVideo, lienAnalytiquesChaine, lienStudio, lienChaine, lienDirect,
   actionAffichee, attenteTerminee, messageApresConfirmation,
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
-  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, libelleFin, plateformesDeLaPile, groupesDeRefus, statsConcours, estRappelDeDecision, ventesRecentes, revenuParPeriode, courbeRevenu, symboleDevise, progressionObjectifTelegram, bilanSemaine, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, messagePcEteint, distanceTiree, doitActualiser, historiqueDesOrdres, lienGumroad, lienTiktok,
+  jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, libelleFin, plateformesDeLaPile, groupesDeRefus, statsConcours, estRappelDeDecision, ventesRecentes, revenuParPeriode, courbeRevenu, symboleDevise, progressionObjectifTelegram, bilanSemaine, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, messagePcEteint, fusionnerReleveCloud, distanceTiree, doitActualiser, historiqueDesOrdres, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
@@ -1967,7 +1967,7 @@ function afficher(paquet) {
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);
   }
-  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant) : null;
+  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant, chargeEnLigne.cloud_a) : null;
   const noeuds = [...(pcEteint ? [el("p", "avertissement", pcEteint)] : []), ...peremptions];
   if (onglets.length === 0) {
     noeuds.push(el("p", "discret", "Aucun projet dans ce relevé."));
@@ -2103,11 +2103,27 @@ if (EN_LIGNE) {
   }
 }
 
+// Le relevé du robot GitHub (abonnés Telegram relevés PC éteint), déchiffré avec le même mot de passe ; null s'il n'existe pas ou n'est pas lisible.
+async function lireReleveCloud() {
+  try {
+    const reponse = await fetch("data.cloud.enc.json", { cache: "no-store" });
+    if (!reponse.ok) return null;
+    const enveloppe = await reponse.json();
+    return await dechiffrer(enveloppe, await deriverCle(motDePasse, enveloppe));
+  } catch {
+    return null;
+  }
+}
+
 async function chargerUneFois() {
   let paquet;
   try {
     if (EN_LIGNE) {
       chargeEnLigne = await lireChargeEnLigne();
+      const maintenantCharge = new Date();
+      if (messagePcEteint(chargeEnLigne.publie_a, maintenantCharge) !== null) { // PC éteint : on ne cherche le relevé du robot que dans ce cas
+        chargeEnLigne = fusionnerReleveCloud(chargeEnLigne, await lireReleveCloud(), maintenantCharge);
+      }
       paquet = chargeEnLigne.paquet;
     } else {
       const reponse = await fetch("data.json", { cache: "no-store" });

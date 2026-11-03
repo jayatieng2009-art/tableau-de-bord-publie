@@ -1,11 +1,15 @@
 name: Déployer la page
 
-# Modèle copié par publier.py dans le dépôt de publication (.github/workflows/deployer.yml).
-# Il ne fait que servir le dossier site/ (page + données) sur GitHub Pages.
+# Modèle copié par le PC dans le dépôt de publication (.github/workflows/deployer.yml).
+# Il sert le dossier site/ (page + données) sur GitHub Pages. Quand le secret MOT_DE_PASSE_PAGE existe, il lance d'abord le robot
+# cloud/rafraichir.mjs, qui relève les chiffres publics (Telegram) même PC éteint et les ajoute, chiffrés, à ce qui est mis en ligne
+# (rien n'est écrit dans le dépôt). Toutes les 3 heures, et à chaque envoi du PC.
 on:
   push:
     branches: [main]
     paths: ["site/**"]
+  schedule:
+    - cron: "17 */3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,6 +29,12 @@ jobs:
       url: ${{ steps.deploiement.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - name: Relever les chiffres publics (robot sans PC)
+        if: ${{ hashFiles('cloud/rafraichir.mjs') != '' }}
+        continue-on-error: true
+        env:
+          MOT_DE_PASSE_PAGE: ${{ secrets.MOT_DE_PASSE_PAGE }}
+        run: node cloud/rafraichir.mjs
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
