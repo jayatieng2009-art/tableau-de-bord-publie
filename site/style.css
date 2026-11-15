@@ -61,6 +61,7 @@ h3 { font-size: 1rem; margin: 0; overflow-wrap: anywhere; }
 
 .entete { margin-bottom: 16px; }
 .discret { color: var(--discret); margin: 0; }
+.texte-ok { color: var(--ok-texte); font-weight: 600; margin: 0; }
 
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 

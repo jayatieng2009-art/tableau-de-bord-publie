@@ -744,6 +744,27 @@ export function messagePcEteint(publieA, maintenant, cloudA) {
   return `Le PC n'a rien publié depuis ${dureeLisible(ecoule)} : il est probablement éteint. Les ✅ / ❌ des concours marchent quand même (le bot les applique), mais les ordres du live attendent le PC.${suite}`;
 }
 
+const heureDeParis = (iso) => (typeof iso === "string" && Number.isFinite(Date.parse(iso)) ? FORMAT_HEURE_PARIS.format(new Date(iso)).replace(":", " h ") : null);
+
+// Les vidéos de demain, envoyées chaque soir par le bot dans le groupe Telegram : la ligne d'état quand tout va bien ou que l'on attend,
+// { ton, texte } (ton « ok » ou « info ») ; null quand le suivi n'a pas commencé ou quand il y a un problème (les alertes de la carte le disent déjà).
+export function ligneVideosDeDemain(videos) {
+  const v = objetSur(videos);
+  const d = objetSur(v.demain);
+  if (v.actif !== true) return null;
+  if (d.etat === "arrivees") {
+    const heure = heureDeParis(d.envoye_le);
+    const nombres = estNombre(d.envoyees) && estNombre(d.attendues) ? ` (${d.envoyees} sur ${d.attendues})` : "";
+    return { ton: "ok", texte: `Vidéos de demain arrivées dans le groupe${heure ? ` à ${heure}` : ""}${nombres}` };
+  }
+  if (d.etat === "attendues") {
+    const heure = heureDeParis(d.attendu_a);
+    return { ton: "info", texte: `Vidéos de demain attendues dans le groupe${heure ? ` vers ${heure}` : ""}` };
+  }
+  if (d.etat === "rien" && d.raison !== "pas-pretes") return { ton: "info", texte: "Pas de vidéo prévue demain" };
+  return null;
+}
+
 const PUBLICATIONS_CLOUD_MAX = 10;
 
 function publicationsDuCloud(liste) {

@@ -9,7 +9,7 @@ import {
   jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, libelleFin, plateformesDeLaPile, groupesDeRefus, statsConcours, estRappelDeDecision, ventesRecentes, revenuParPeriode, courbeRevenu, symboleDevise, progressionObjectifTelegram, bilanSemaine, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, messagePcEteint, fusionnerReleveCloud, distanceTiree, doitActualiser, historiqueDesOrdres, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
   depotProspection, lireListeProspection, classerProspection, resumeProspection, tacheProspection, titreOrdreProspection,
-  ordresProspectionEnAttente, reponseDuWorkflow, messageListeProspection,
+  ordresProspectionEnAttente, reponseDuWorkflow, messageListeProspection, ligneVideosDeDemain,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -1099,6 +1099,12 @@ function carteConcours(projet, maintenant) {
   entete.append(aSurveiller ? el("span", "badge-attention", "À surveiller") : el("span", "badge-ok", "Rien d'anormal"));
   entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
   carte.append(entete);
+
+  // Les vidéos de demain dans le groupe Telegram : une ligne d'état (les problèmes sont dits plus bas, avec les alertes) et un appui pour ouvrir le groupe.
+  const videosDeDemain = ligneVideosDeDemain(d.videos_du_jour);
+  const groupes = liste(d.groupes).map((g) => lien(`Ouvrir le groupe « ${titreSur(g.nom)} »`, lienPlateforme(g.lien), "lien lien-principal")).filter(Boolean);
+  if (videosDeDemain) carte.append(el("p", videosDeDemain.ton === "ok" ? "texte-ok" : "discret", `${videosDeDemain.ton === "ok" ? "✅" : "⏳"} ${videosDeDemain.texte}`));
+  if (groupes.length > 0) carte.append(groupeDeLiens("fp-acces", ...groupes));
 
   const outils = groupeDeLiens(
     "fp-acces",
