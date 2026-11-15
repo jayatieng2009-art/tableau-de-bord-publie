@@ -973,3 +973,128 @@ export function bilanSemaine(projets, maintenant) {
     ventes7j,
   };
 }
+
+// ---------- Prospection : la liste écrite par la routine (dépôt livraisons-videos, branche prospection) ----------
+// Chaque ligne : un e-mail (brouillon Gmail à envoyer), un message privé (à copier-coller) ou un profil à vérifier.
+// Un bouton du tableau ouvre un ticket « mail_<id> » ou « fait_<id> » dans ce dépôt ; un workflow GitHub l'applique dans la minute.
+
+const ID_PROSPECTION = /^[0-9a-f]{8}$/;
+const JOUR_ISO = /^\d{4}-\d{2}-\d{2}$/;
+const TYPES_PROSPECTION = ["email", "dm", "verifier"];
+const STATUTS_FAITS = new Set(["envoyé", "vérifié"]);
+export const NOM_DEPOT_PROSPECTION = "livraisons-videos";
+
+// « propriétaire/livraisons-videos », du même propriétaire que le dépôt du bot ; null si on ne le connaît pas.
+export function depotProspection(depotDuBot) {
+  if (typeof depotDuBot !== "string" || !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(depotDuBot)) return null;
+  return `${depotDuBot.split("/")[0]}/${NOM_DEPOT_PROSPECTION}`;
+}
+
+const texteSur = (v, max) => (typeof v === "string" && v.trim() ? Array.from(v.trim()).slice(0, max).join("") : "");
+
+// Le fichier de la routine, gardé seulement s'il est bien formé : { maj, actions } ; les lignes illisibles sont ignorées.
+export function lireListeProspection(json) {
+  const brut = objetSur(json);
+  const actions = [];
+  const vus = new Set();
+  for (const a of listeSure(brut.actions)) {
+    if (typeof a.id !== "string" || !ID_PROSPECTION.test(a.id) || vus.has(a.id)) continue;
+    if (!TYPES_PROSPECTION.includes(a.type) || typeof a.jour !== "string" || !JOUR_ISO.test(a.jour)) continue;
+    vus.add(a.id);
+    actions.push({
+      id: a.id, type: a.type, jour: a.jour,
+      pseudo: texteSur(a.pseudo, 60) || "(sans nom)",
+      plateforme: texteSur(a.plateforme, 30),
+      lien: lienPlateforme(a.lien),
+      a: a.type === "email" ? texteSur(a.a, 120) : "",
+      objet: a.type === "email" ? texteSur(a.objet, 200) : "",
+      message: texteSur(a.message, 3000),
+      notes: texteSur(a.notes, 600),
+      statut: texteSur(a.statut, 30) || "à envoyer",
+      envoye_le: typeof a.envoye_le === "string" ? a.envoye_le : null,
+      retour: texteSur(a.retour, 200),
+    });
+  }
+  return { maj: typeof brut.maj === "string" ? brut.maj : null, actions };
+}
+
+const RANG_TYPE = { email: 0, dm: 1, verifier: 2 };
+
+// Ce qui est à faire aujourd'hui (retards compris, les plus anciens d'abord), ce qui vient ensuite, ce qui est déjà fait.
+export function classerProspection(actions, maintenant) {
+  const aujourdhui = jourParis(maintenant);
+  const sortie = { aFaire: [], aVenir: [], faits: [], compte: { email: 0, dm: 0, verifier: 0 } };
+  for (const a of Array.isArray(actions) ? actions : []) {
+    if (!a || typeof a !== "object") continue;
+    if (STATUTS_FAITS.has(a.statut)) sortie.faits.push(a);
+    else if (a.jour <= aujourdhui) {
+      sortie.aFaire.push({ ...a, enRetard: a.jour < aujourdhui });
+      sortie.compte[a.type] = (sortie.compte[a.type] ?? 0) + 1;
+    } else sortie.aVenir.push(a);
+  }
+  const ordre = (x, y) => x.jour.localeCompare(y.jour) || RANG_TYPE[x.type] - RANG_TYPE[y.type];
+  sortie.aFaire.sort(ordre);
+  sortie.aVenir.sort(ordre);
+  sortie.faits.sort((x, y) => String(y.envoye_le ?? "").localeCompare(String(x.envoye_le ?? "")));
+  return sortie;
+}
+
+// « 2 e-mails, 3 messages privés et 1 profil à vérifier » ; "" s'il n'y a rien.
+export function resumeProspection(compte) {
+  const c = objetSur(compte);
+  const morceaux = [
+    estNombre(c.email) && c.email > 0 ? `${c.email} e-mail${c.email > 1 ? "s" : ""}` : null,
+    estNombre(c.dm) && c.dm > 0 ? `${c.dm} message${c.dm > 1 ? "s" : ""} privé${c.dm > 1 ? "s" : ""}` : null,
+    estNombre(c.verifier) && c.verifier > 0 ? `${c.verifier} profil${c.verifier > 1 ? "s" : ""} à vérifier` : null,
+  ].filter(Boolean);
+  if (morceaux.length === 0) return "";
+  return morceaux.length === 1 ? morceaux[0] : `${morceaux.slice(0, -1).join(", ")} et ${morceaux[morceaux.length - 1]}`;
+}
+
+// La ligne « À faire en premier » de l'accueil ; null s'il n'y a rien à faire aujourd'hui.
+export function tacheProspection(classement) {
+  const c = objetSur(classement);
+  const aFaire = listeSure(c.aFaire);
+  if (aFaire.length === 0) return null;
+  const retard = aFaire.some((a) => a.enRetard === true);
+  return {
+    nom: "Prospection", nb: aFaire.length, cible: "boutique", niveau: retard ? "erreur" : "avertissement",
+    texte: `${resumeProspection(c.compte)} à envoyer${retard ? " (certains sont en retard)" : " aujourd'hui"} : un bouton par ligne dans Boutique.`,
+  };
+}
+
+// Le titre du ticket d'un bouton : « mail_<id> » pour envoyer un e-mail, « fait_<id> » pour un message privé ou une vérification.
+export function titreOrdreProspection(ligne) {
+  if (!ligne || typeof ligne !== "object" || typeof ligne.id !== "string" || !ID_PROSPECTION.test(ligne.id)) return null;
+  if (ligne.type === "email") return `mail_${ligne.id}`;
+  if (ligne.type === "dm" || ligne.type === "verifier") return `fait_${ligne.id}`;
+  return null;
+}
+
+// Les ordres déjà donnés et pas encore appliqués (tickets ouverts) : les identifiants des lignes concernées.
+export function ordresProspectionEnAttente(tickets) {
+  const ids = new Set();
+  for (const t of listeSure(tickets)) {
+    const m = typeof t.title === "string" ? /^(?:mail|fait|essai)_([0-9a-f]{8})$/.exec(t.title) : null;
+    if (m) ids.add(m[1]);
+  }
+  return ids;
+}
+
+// La réponse du workflow dans un ticket (dernier commentaire du robot GitHub), 200 caractères au plus ; null s'il n'a pas répondu.
+export function reponseDuWorkflow(commentaires) {
+  const siens = listeSure(commentaires).filter((c) => c.user && c.user.login === "github-actions[bot]" && typeof c.body === "string" && c.body.trim());
+  if (siens.length === 0) return null;
+  return Array.from(siens[siens.length - 1].body.trim()).slice(0, 200).join("");
+}
+
+const MESSAGES_LISTE_PROSPECTION = {
+  401: "La clé GitHub est refusée ou expirée : recrée-la, puis remets-la dans cle_github_ordres.txt sur le PC.",
+  403: "La clé GitHub n'a pas le droit de lire le dépôt livraisons-videos : ajoute-lui la permission « Contents » en lecture.",
+  404: "La clé GitHub n'ouvre pas encore le dépôt livraisons-videos : ajoute ce dépôt à la clé, avec « Contents » (lecture) et « Issues » (lecture et écriture).",
+};
+
+// Pourquoi la liste ne s'affiche pas, en une phrase.
+export function messageListeProspection(statut) {
+  return Object.hasOwn(MESSAGES_LISTE_PROSPECTION, statut) ? MESSAGES_LISTE_PROSPECTION[statut] : "La liste de prospection est illisible pour le moment : réessaie dans un moment.";
+}

@@ -301,3 +301,14 @@ a.produit-mini:hover { border-color: var(--accent); }
 .pile-confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .pile-lots { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid var(--bordure); border-radius: 12px; }
 .pile-lot { display: block; margin: 12px auto 0; }
+
+/* ---------- Prospection ---------- */
+.pr-ligne { padding: 12px 0; border-top: 1px solid var(--bordure); }
+.pr-zone > .pr-ligne:first-child { border-top: 0; }
+.pr-titre { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; margin: 0 0 4px; }
+.pr-icone { font-size: 1.1rem; }
+.pr-badge { margin-left: auto; }
+.pr-meta { margin: 2px 0; font-size: 0.875rem; overflow-wrap: anywhere; }
+.pr-message { margin: 6px 0; padding: 10px 12px; border-radius: 8px; background: var(--neutre-fond); color: var(--neutre-texte); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pr-boutons { margin-top: 8px; }
+.pr-boutons a.bouton { display: inline-flex; align-items: center; text-decoration: none; }

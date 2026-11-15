@@ -8,6 +8,8 @@ import {
   lienPlateforme, delaiAvant, classerCalendrier, libelleOrdre, trierAlertes,
   jourParis, formaterMontant, construireAgenda, groupesDeTaches, tuilesAccueil, presenterConcours, pileDeConcours, libelleFin, plateformesDeLaPile, groupesDeRefus, statsConcours, estRappelDeDecision, ventesRecentes, revenuParPeriode, courbeRevenu, symboleDevise, progressionObjectifTelegram, bilanSemaine, nomCourtProduit, abreger, commandeLiveEnLigne, titreOrdreLive, actionsLiveEnAttente, reponseDuPc, messagePcEteint, fusionnerReleveCloud, distanceTiree, doitActualiser, historiqueDesOrdres, lienGumroad, lienTiktok,
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
+  depotProspection, lireListeProspection, classerProspection, resumeProspection, tacheProspection, titreOrdreProspection,
+  ordresProspectionEnAttente, reponseDuWorkflow, messageListeProspection,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -1733,6 +1735,263 @@ function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
   return carte;
 }
 
+// ---------- Prospection : envoyer les e-mails et suivre les messages privés depuis le tableau (page en ligne) ----------
+// La liste vient du dépôt livraisons-videos (branche prospection), écrite par la routine. Un bouton ouvre un ticket
+// « mail_<id> » (le brouillon Gmail de la ligne part tel quel) ou « fait_<id> » (message privé envoyé à la main) ;
+// le workflow « Envoi des messages de prospection » l'applique dans la minute, répond dans le ticket et le ferme.
+
+let listeProspection = null; // { maj, actions } ; null tant qu'elle n'est pas lue (ou sans clé GitHub)
+let erreurProspection = null; // pourquoi la liste n'a pas pu être lue, en une phrase
+let prospectionEnAttente = new Set(); // identifiants des lignes dont l'ordre est parti (ticket encore ouvert)
+const reponsesProspection = new Map(); // identifiant -> dernière réponse du workflow, montrée sous la ligne
+const messagesProspection = new Map(); // identifiant -> { texte, type } : dernier message local (copié, erreur…)
+
+async function lireProspection() {
+  listeProspection = null;
+  erreurProspection = null;
+  const jeton = lireJetonGithub();
+  const depot = depotProspection(depotConcours);
+  if (!EN_LIGNE || !jeton || !depot) return;
+  try {
+    const reponse = await fetch(`https://api.github.com/repos/${depot}/contents/prospection.json?ref=prospection`, {
+      headers: { ...enTetesGithub(jeton), Accept: "application/vnd.github.raw+json" }, cache: "no-store",
+    });
+    if (!reponse.ok) {
+      erreurProspection = messageListeProspection(reponse.status);
+      return;
+    }
+    listeProspection = lireListeProspection(await reponse.json());
+    const tickets = await fetch(`https://api.github.com/repos/${depot}/issues?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
+    if (tickets.ok) prospectionEnAttente = ordresProspectionEnAttente(await tickets.json());
+  } catch {
+    erreurProspection = messageListeProspection(0);
+  }
+}
+
+async function creerTicketProspection(titre) {
+  const jeton = lireJetonGithub();
+  const depot = depotProspection(depotConcours);
+  if (!jeton || !depot || !titre) return { ok: false, erreur: "Clé GitHub absente : actualise la page." };
+  const base = `https://api.github.com/repos/${depot}/issues`;
+  try {
+    const ouverts = await fetch(`${base}?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
+    if (ouverts.ok) {
+      const tickets = await ouverts.json();
+      if (Array.isArray(tickets) && tickets.some((t) => t && t.title === titre)) return { ok: false, erreur: "C'est déjà demandé : la réponse arrive dans la minute." };
+    }
+    const reponse = await fetch(base, {
+      method: "POST", headers: { ...enTetesGithub(jeton), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: titre, body: "Ordre donné depuis le tableau de bord (carte Prospection)." }),
+    });
+    if (reponse.status !== 201) return { ok: false, erreur: reponse.status === 404 || reponse.status === 403 ? messageListeProspection(404) : messageErreurGithub(reponse.status) };
+    let numero = null;
+    try {
+      numero = (await reponse.json()).number;
+    } catch {
+      // le numéro sert seulement à suivre la réponse
+    }
+    return { ok: true, numero };
+  } catch {
+    return { ok: false, erreur: "GitHub est injoignable : réessaie dans un moment." };
+  }
+}
+
+// Attend que le workflow ferme le ticket (2 min 30 au plus) ; rend sa réponse, ou null.
+async function attendreReponseWorkflow(numero) {
+  const jeton = lireJetonGithub();
+  const depot = depotProspection(depotConcours);
+  if (!jeton || !depot || !Number.isInteger(numero)) return null;
+  const base = `https://api.github.com/repos/${depot}/issues/${numero}`;
+  const debut = Date.now();
+  while (Date.now() - debut < DUREE_SUIVI_ORDRE_MS) {
+    await pause(DELAI_SUIVI_ORDRE_MS);
+    try {
+      const ticket = await fetch(base, { headers: enTetesGithub(jeton), cache: "no-store" });
+      if (!ticket.ok) return null;
+      if ((await ticket.json()).state !== "closed") continue;
+      const commentaires = await fetch(`${base}/comments?per_page=10`, { headers: enTetesGithub(jeton), cache: "no-store" });
+      return commentaires.ok ? reponseDuWorkflow(await commentaires.json()) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function copierTexte(texte) {
+  try {
+    await navigator.clipboard.writeText(texte);
+    return true;
+  } catch {
+    // vieux navigateur ou permission refusée : on passe par une zone de texte cachée
+    const zone = document.createElement("textarea");
+    zone.value = texte;
+    zone.setAttribute("readonly", "");
+    zone.style.position = "fixed";
+    zone.style.opacity = "0";
+    document.body.append(zone);
+    zone.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    zone.remove();
+    return ok;
+  }
+}
+
+const jourCourt = (iso) => (typeof iso === "string" && iso.length >= 10 ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "?");
+const ICONES_PROSPECTION = { email: "📧", dm: "💬", verifier: "🔍" };
+
+// Une ligne de la liste, avec ses boutons. `rafraichir` redessine la carte entière.
+function ligneProspection(a, maintenant, rafraichir) {
+  const ligne = el("div", "pr-ligne");
+  const titre = el("p", "pr-titre");
+  titre.append(el("span", "pr-icone", ICONES_PROSPECTION[a.type] ?? "•"), el("strong", "", a.pseudo));
+  if (a.plateforme) titre.append(el("span", "discret", ` · ${a.plateforme}`));
+  if (a.enRetard) titre.append(el("span", "badge-attention pr-badge", `prévu le ${jourCourt(a.jour)}`));
+  else if (a.jour > jourParis(maintenant) && a.statut === "à envoyer") titre.append(el("span", "discret pr-badge", `le ${jourCourt(a.jour)}`));
+  ligne.append(titre);
+  if (a.type === "email" && a.objet) ligne.append(el("p", "discret pr-meta", `Objet : ${abreger(a.objet, 110)}`));
+  if (a.statut === "à envoyer") {
+    // Un profil à vérifier : les notes disent quoi vérifier, on les montre. Sinon elles restent repliées avec le message.
+    if (a.type === "verifier" && a.notes) ligne.append(el("p", "discret pr-meta", abreger(a.notes, 300)));
+    const replies = [];
+    if (a.type === "dm" && a.message) replies.push(el("p", "pr-message", a.message));
+    if (a.type !== "verifier" && a.notes) replies.push(el("p", "discret pr-meta", a.notes));
+    if (replies.length > 0) ligne.append(sectionFp(a.type === "dm" ? "Voir le message et les notes" : "Notes", false, ...replies));
+  }
+
+  const message = el("p", "cmd-message");
+  message.setAttribute("role", "status");
+  const local = messagesProspection.get(a.id);
+  const retour = reponsesProspection.get(a.id) ?? (a.statut === "à envoyer" ? a.retour : "");
+  if (local) ecrireMessage(message, local.texte, local.type);
+  else if (retour) ecrireMessage(message, retour, /^✅|^Noté|^🧪/.test(retour) ? "ok" : "erreur");
+  const boutons = el("div", "cc-boutons pr-boutons");
+  ligne.append(boutons, message);
+
+  const faitIci = /^(✅|Noté)/.test(reponsesProspection.get(a.id) ?? ""); // fait depuis cette page : la liste se met à jour juste après
+  if (a.statut === "envoyé" || a.statut === "vérifié" || faitIci) {
+    boutons.append(el("span", "badge-ok", `${a.statut === "vérifié" ? "Vérifié" : "Envoyé"}${a.envoye_le ? ` le ${jourCourt(a.envoye_le)}` : ""}`));
+    return ligne;
+  }
+  if (prospectionEnAttente.has(a.id)) {
+    boutons.append(el("span", "badge-attention", "En cours : réponse dans la minute"));
+    return ligne;
+  }
+
+  const donnerOrdre = async (texteAttente) => {
+    boutons.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    const reponse = await creerTicketProspection(titreOrdreProspection(a));
+    if (!reponse.ok) {
+      messagesProspection.set(a.id, { texte: reponse.erreur, type: "erreur" });
+      rafraichir();
+      return;
+    }
+    messagesProspection.set(a.id, { texte: texteAttente, type: "info" });
+    prospectionEnAttente.add(a.id);
+    rafraichir();
+    const texte = await attendreReponseWorkflow(reponse.numero);
+    messagesProspection.delete(a.id);
+    reponsesProspection.set(a.id, texte ?? "Pas encore de réponse de GitHub : regarde de nouveau dans quelques minutes.");
+    await charger();
+  };
+
+  const profil = lien("Ouvrir le profil", a.lien, "bouton bouton-secondaire");
+  if (a.type === "email") {
+    const envoyer = bouton("📧 Envoyer", "bouton-principal", () => confirmerEnvoi());
+    boutons.append(...[envoyer, profil].filter(Boolean));
+    const confirmerEnvoi = () => {
+      envoyer.disabled = true;
+      let restant = 30;
+      const compte = el("p", "discret cmd-compte", `Expire dans ${restant} s`);
+      const panneau = el("div", "cmd-confirmation");
+      confirmationsOuvertes += 1;
+      let ferme = false;
+      const fermer = () => {
+        if (ferme) return;
+        ferme = true;
+        confirmationsOuvertes -= 1;
+        clearInterval(minuteur);
+        panneau.remove();
+      };
+      const minuteur = setInterval(() => {
+        restant -= 1;
+        if (restant <= 0) {
+          fermer();
+          envoyer.disabled = false;
+          ecrireMessage(message, "Confirmation expirée : recommence.", "erreur");
+        } else {
+          compte.textContent = `Expire dans ${restant} s`;
+        }
+      }, 1000);
+      const confirmer = bouton("Oui, envoyer", "bouton-principal", async () => {
+        confirmer.disabled = true;
+        fermer();
+        await donnerOrdre("Envoi demandé : GitHub l'envoie dans la minute…");
+      });
+      const annuler = bouton("Annuler", "bouton-secondaire", () => {
+        fermer();
+        envoyer.disabled = false;
+        ecrireMessage(message, "Annulé : rien n'est parti.", "info");
+      });
+      panneau.setAttribute("role", "group");
+      panneau.setAttribute("aria-label", "Confirmation");
+      panneau.append(
+        el("p", "cmd-titre", `Envoyer l'e-mail à ${a.pseudo} ?`),
+        el("p", "cmd-avertissement", `Le brouillon Gmail part tel quel${a.a ? ` à ${a.a}` : ""}. Il ne peut pas être rattrapé une fois parti.`),
+        compte,
+        groupeDeLiens("cmd-actions", confirmer, annuler),
+      );
+      ligne.append(panneau);
+    };
+  } else {
+    const copier = a.type === "dm" && a.message
+      ? bouton("📋 Copier le message", "bouton-secondaire", async () => {
+        const ok = await copierTexte(a.message);
+        ecrireMessage(message, ok ? "Message copié : ouvre le profil et colle-le dans la conversation." : "Copie impossible : ouvre « Voir le message » et sélectionne le texte.", ok ? "ok" : "erreur");
+      })
+      : null;
+    const fait = bouton(a.type === "dm" ? "✅ C'est envoyé" : "✅ Vérifié", "bouton-principal", () => donnerOrdre("C'est noté : GitHub met la liste à jour dans la minute…"));
+    boutons.append(...[copier, profil, fait].filter(Boolean));
+  }
+  return ligne;
+}
+
+function carteProspection(maintenant) {
+  const carte = el("article", "carte carte-large");
+  const entete = el("div", "fp-entete");
+  entete.append(el("h3", "", "Prospection"));
+  carte.append(entete);
+  if (erreurProspection) {
+    carte.append(el("p", "alerte alerte-avertissement", erreurProspection));
+    return carte;
+  }
+  if (!listeProspection) return null;
+  const classement = classerProspection(listeProspection.actions, maintenant);
+  const resume = resumeProspection(classement.compte);
+  entete.append(el("span", classement.aFaire.length > 0 ? "badge-attention" : "badge-ok", classement.aFaire.length > 0 ? `${classement.aFaire.length} à faire` : "À jour"));
+  carte.append(el("p", "discret", resume
+    ? `Aujourd'hui : ${resume}. Les e-mails partent d'un bouton ; les messages privés se copient, puis « C'est envoyé ».`
+    : "Rien à envoyer aujourd'hui."));
+
+  const zone = el("div", "pr-zone");
+  carte.append(zone);
+  const dessiner = () => {
+    const c = classerProspection(listeProspection.actions, new Date());
+    zone.replaceChildren();
+    for (const a of c.aFaire) zone.append(ligneProspection(a, new Date(), dessiner));
+    if (c.aVenir.length > 0) zone.append(sectionFp(`À venir (${c.aVenir.length})`, false, ...c.aVenir.map((a) => ligneProspection(a, new Date(), dessiner))));
+    if (c.faits.length > 0) zone.append(sectionFp(`Déjà fait (${c.faits.length})`, false, ...c.faits.map((a) => ligneProspection(a, new Date(), dessiner))));
+  };
+  dessiner();
+  if (listeProspection.maj) carte.append(el("p", "discret", `Liste préparée par la routine ${ageLisible(listeProspection.maj, maintenant)}.`));
+  return carte;
+}
+
 // ---------- Accueil : l'essentiel d'un coup d'œil ----------
 
 const ICONES_TUILES = { concours: "🎁", abonnes: "👥", revenu: "💰", live: "🔴" };
@@ -1742,6 +2001,8 @@ const MAX_A_FAIRE = 3;
 function blocAccueil(projets, etat, maintenant) {
   const tuiles = tuilesAccueil(projets, etat);
   const groupes = groupesDeTaches(projets);
+  const prospection = listeProspection ? tacheProspection(classerProspection(listeProspection.actions, maintenant)) : null;
+  if (prospection) groupes.unshift(prospection);
   const agenda = construireAgenda(projets, maintenant);
   if (tuiles.length === 0 && groupes.length === 0 && agenda.length === 0) return null;
   const section = el("section", "accueil");
@@ -1960,6 +2221,17 @@ function afficher(paquet) {
           cartes.append(erreur);
         }
       }
+      let prospection = null;
+      try {
+        prospection = carteProspection(maintenant);
+      } catch {
+        prospection = null; // la liste est un plus : une donnée inattendue ne doit pas cacher la boutique
+      }
+      if (prospection) {
+        const urgent = listeProspection && classerProspection(listeProspection.actions, maintenant).aFaire.length > 0;
+        if (urgent) cartes.prepend(prospection);
+        else cartes.append(prospection);
+      }
       for (const projet of o.projets) if (projet !== produits && projet !== gumroad) cartes.append(carteDuProjet(projet, maintenant));
     } else {
       for (const projet of o.projets) cartes.append(carteDuProjet(projet, maintenant));
@@ -2142,7 +2414,7 @@ async function chargerUneFois() {
     depotConcours = null;
   }
   decisionsDisponibles = EN_LIGNE ? Boolean(lireJetonGithub()) : (await lireEtatDecisions()) !== null;
-  if (EN_LIGNE && decisionsDisponibles) await lireOrdresEnAttenteGithub();
+  if (EN_LIGNE && decisionsDisponibles) await Promise.all([lireOrdresEnAttenteGithub(), lireProspection()]);
   etatRevenus = EN_LIGNE ? ((chargeEnLigne && chargeEnLigne.revenus) || null) : await lireEtatRevenus();
   const ouvertes = Array.from(document.querySelectorAll("details.fp-section")).map((d) => d.open);
   try {
