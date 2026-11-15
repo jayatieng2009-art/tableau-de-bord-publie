@@ -665,16 +665,6 @@ let depotConcours = null; // « propriétaire/dépôt » du bot, pris dans les d
 
 const enTetesGithub = (jeton) => ({ Authorization: `Bearer ${jeton}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" });
 
-function demandeEnLigne(c, action) {
-  const verbe = action === "ok" ? "Publier" : "Refuser";
-  return {
-    jeton: null, expire_dans: 30, libelle: `${verbe} « ${String(c.titre ?? "(sans titre)").slice(0, 80)} »`,
-    avertissement: action === "ok"
-      ? "L'ordre part à GitHub : le bot publiera ce concours sur la chaîne Telegram à son prochain passage."
-      : "L'ordre part à GitHub : le bot oubliera ce concours pour de bon à son prochain passage.",
-  };
-}
-
 // Crée le ticket d'un ordre (le bot ou le PC le lira) ; { ok, json } comme la réponse du serveur privé, pour que la même interface serve aux deux.
 // Pas de doublon : si un ticket ouvert porte l'un des titres de `enConflit`, l'ordre est refusé avec `messageDoublon`.
 async function creerTicketGithub(titre, enConflit, messageDoublon) {
@@ -785,7 +775,8 @@ function sectionCleGithub() {
   );
 }
 
-// ✅ Publier / ❌ Refuser sur une carte du bot : demande, confirmation (jeton de 30 s), puis l'ordre part vers le bot.
+// ✅ Publier / ❌ Refuser sur une carte du bot : un seul appui. La page enchaîne elle-même la demande et la confirmation (jeton de 30 s) :
+// plus de bouton « Confirmer ». Sur la page en ligne, « Annuler cet ordre » reprend la dernière décision tant que le bot ne l'a pas appliquée.
 // options.grand : gros boutons (pile de concours) ; options.apres(action) : appelé une fois l'ordre envoyé.
 function zoneDecision(c, options = {}) {
   const grand = options.grand === true;
@@ -811,47 +802,19 @@ function zoneDecision(c, options = {}) {
 
   async function demander(action) {
     emplacement.querySelectorAll("button").forEach((b) => { b.disabled = true; });
-    if (EN_LIGNE) {
-      confirmation(demandeEnLigne(c, action), action); // pas de serveur : la confirmation se fait ici, l'ordre part à GitHub
-      return;
-    }
-    const reponse = await poster("api/concours/demander", { action, code: c.code });
-    if (!reponse.ok) {
-      ecrireMessage(message, reponse.json && reponse.json.erreur ? reponse.json.erreur : "Décision impossible.", "erreur");
-      dessiner();
-      return;
-    }
-    confirmation(reponse.json, action);
-  }
-
-  function confirmation(demande, action) {
-    let restant = Number(demande.expire_dans) > 0 ? Number(demande.expire_dans) : 30;
-    const compte = el("p", "discret cmd-compte");
-    const panneau = el("div", "cmd-confirmation");
-    confirmationsOuvertes += 1;
-    let ferme = false;
-    const fermer = () => {
-      if (ferme) return;
-      ferme = true;
-      confirmationsOuvertes -= 1;
-      clearInterval(minuteur);
-      panneau.remove();
-    };
-    const minuteur = setInterval(() => {
-      restant -= 1;
-      if (restant <= 0) {
-        fermer();
-        ecrireMessage(message, "Confirmation expirée : recommencez.", "erreur");
-        dessiner();
-      } else {
-        compte.textContent = `Expire dans ${restant} s`;
+    confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant l'envoi
+    try {
+      let jeton = null;
+      if (!EN_LIGNE) { // page du PC : le serveur donne un jeton de 30 s, que l'on rend aussitôt (page en ligne : pas de serveur, l'ordre part à GitHub)
+        const demande = await poster("api/concours/demander", { action, code: c.code });
+        if (!demande.ok) {
+          ecrireMessage(message, demande.json && demande.json.erreur ? demande.json.erreur : "Décision impossible.", "erreur");
+          dessiner();
+          return;
+        }
+        jeton = demande.json.jeton;
       }
-    }, 1000);
-    compte.textContent = `Expire dans ${restant} s`;
-    const confirmer = bouton("Confirmer", "bouton-danger", async () => {
-      confirmer.disabled = true;
-      const reponse = EN_LIGNE ? await envoyerOrdreGithub(action, c.code) : await poster("api/concours/confirmer", { jeton: demande.jeton });
-      fermer();
+      const reponse = EN_LIGNE ? await envoyerOrdreGithub(action, c.code) : await poster("api/concours/confirmer", { jeton });
       if (!reponse.ok) {
         ecrireMessage(message, reponse.json && reponse.json.erreur ? reponse.json.erreur : "Décision impossible.", "erreur");
         dessiner();
@@ -862,21 +825,9 @@ function zoneDecision(c, options = {}) {
       ecrireMessage(message, `Ordre envoyé : le bot l'appliquera à son prochain passage${textePassage()}.`, "ok");
       dessiner();
       if (typeof options.apres === "function") options.apres(action);
-    });
-    const annuler = bouton("Annuler", "bouton-secondaire", () => {
-      fermer();
-      ecrireMessage(message, "Annulé.", "info");
-      dessiner();
-    });
-    panneau.setAttribute("role", "group");
-    panneau.setAttribute("aria-label", "Confirmation");
-    panneau.append(
-      el("p", "cmd-titre", `${String(demande.libelle ?? "Confirmer")} ?`),
-      el("p", "cmd-avertissement", String(demande.avertissement ?? "")),
-      compte,
-      groupeDeLiens("cmd-actions", confirmer, annuler),
-    );
-    zone.append(panneau);
+    } finally {
+      confirmationsOuvertes -= 1;
+    }
   }
 
   dessiner();
