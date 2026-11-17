@@ -397,10 +397,10 @@ export function construireAgenda(projets, maintenant) {
 }
 
 const TEXTES_GUMROAD = {
-  "a-configurer": ["action", "créer le jeton d'accès Gumroad pour voir les ventes et le revenu."],
-  "jeton-invalide": ["action", "le fichier du jeton Gumroad n'a pas la bonne forme."],
-  refuse: ["avertissement", "Gumroad a refusé le jeton : en créer un nouveau."],
-  erreur: ["avertissement", "Gumroad ne répond pas pour le moment."],
+  "a-configurer": ["action", "jeton à créer."],
+  "jeton-invalide": ["action", "jeton invalide."],
+  refuse: ["avertissement", "jeton refusé."],
+  erreur: ["avertissement", "ne répond pas."],
 };
 
 const NOM_COURT = { "bot-concours": "Concours", "produits-numeriques": "Produits", tiktok: "TikTok", gumroad: "Gumroad", "falling-pickaxe": "Live" };
@@ -414,9 +414,6 @@ function tachesAvecSource(projets) {
     const nom = Object.hasOwn(NOM_COURT, p.adaptateur) ? NOM_COURT[p.adaptateur] : typeof p.nom === "string" ? p.nom : "Projet";
     const d = objetSur(p.details);
     for (const a of listeSure(d.a_faire)) taches.push({ nom, niveau: a.niveau, texte: typeof a.texte === "string" ? a.texte : "" });
-    for (const texte of Array.isArray(d.avertissements) ? d.avertissements : []) {
-      if (typeof texte === "string") taches.push({ nom, niveau: "avertissement", texte });
-    }
     if (p.adaptateur === "gumroad" && Object.hasOwn(TEXTES_GUMROAD, d.etat)) {
       const [niveau, texte] = TEXTES_GUMROAD[d.etat];
       taches.push({ nom, niveau, texte });
@@ -451,7 +448,7 @@ export function estRappelDeDecision(texte) {
 
 const ONGLET_DE_TACHE = { Concours: "concours", Produits: "boutique", Gumroad: "boutique", TikTok: "tiktok", Live: "live" };
 const NOM_DU_GROUPE = { concours: "Concours", boutique: "Boutique", tiktok: "TikTok", live: "Live" };
-const TACHE_COURTE_MAX = 110;
+const TACHE_COURTE_MAX = 70;
 
 // Les tâches à faire ou à surveiller, une ligne par thème (nombre + la plus grave) : l'accueil n'affiche pas vingt phrases.
 // `cible` est l'onglet qui détaille le thème (null pour un projet inconnu). Les simples rappels sont laissés aux onglets.
@@ -734,14 +731,14 @@ const SEUIL_PC_ETEINT = 90 * MINUTE;
 
 const FORMAT_HEURE_PARIS = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
 
-// Un avertissement quand la page en ligne n'a rien reçu du PC depuis plus de 90 minutes (le PC publie toutes les 30 minutes quand il est allumé) ; null sinon.
-// `cloudA` : l'heure du dernier relevé du robot GitHub ; s'il est plus récent que la publication du PC, le bandeau dit que les abonnés Telegram sont à jour.
+// Une ligne courte quand la page en ligne n'a rien reçu du PC depuis plus de 90 minutes (le PC publie toutes les 30 minutes quand il est allumé) ; null sinon.
+// `cloudA` : l'heure du dernier relevé du robot GitHub ; s'il est plus récent que la publication du PC, la ligne ajoute que Telegram est à jour.
 export function messagePcEteint(publieA, maintenant, cloudA) {
   const ecoule = typeof publieA === "string" ? maintenant.getTime() - Date.parse(publieA) : NaN;
   if (!Number.isFinite(ecoule) || ecoule <= SEUIL_PC_ETEINT) return null;
   const relevé = typeof cloudA === "string" ? Date.parse(cloudA) : NaN;
-  const suite = Number.isFinite(relevé) && relevé > Date.parse(publieA) ? ` Les abonnés Telegram sont à jour : relevés par GitHub à ${FORMAT_HEURE_PARIS.format(new Date(relevé))}.` : "";
-  return `Le PC n'a rien publié depuis ${dureeLisible(ecoule)} : il est probablement éteint. Les ✅ / ❌ des concours marchent quand même (le bot les applique), mais les ordres du live attendent le PC.${suite}`;
+  const suite = Number.isFinite(relevé) && relevé > Date.parse(publieA) ? ` · Telegram à jour (${FORMAT_HEURE_PARIS.format(new Date(relevé))})` : "";
+  return `PC éteint depuis ${dureeLisible(ecoule)}${suite}`;
 }
 
 const heureDeParis = (iso) => (typeof iso === "string" && Number.isFinite(Date.parse(iso)) ? FORMAT_HEURE_PARIS.format(new Date(iso)).replace(":", " h ") : null);
@@ -754,14 +751,14 @@ export function ligneVideosDeDemain(videos) {
   if (v.actif !== true) return null;
   if (d.etat === "arrivees") {
     const heure = heureDeParis(d.envoye_le);
-    const nombres = estNombre(d.envoyees) && estNombre(d.attendues) ? ` (${d.envoyees} sur ${d.attendues})` : "";
-    return { ton: "ok", texte: `Vidéos de demain arrivées dans le groupe${heure ? ` à ${heure}` : ""}${nombres}` };
+    const nombres = estNombre(d.envoyees) && estNombre(d.attendues) ? ` (${d.envoyees}/${d.attendues})` : "";
+    return { ton: "ok", texte: `Vidéos de demain : arrivées${heure ? ` à ${heure}` : ""}${nombres}` };
   }
   if (d.etat === "attendues") {
     const heure = heureDeParis(d.attendu_a);
-    return { ton: "info", texte: `Vidéos de demain attendues dans le groupe${heure ? ` vers ${heure}` : ""}` };
+    return { ton: "info", texte: `Vidéos de demain : attendues${heure ? ` vers ${heure}` : ""}` };
   }
-  if (d.etat === "rien" && d.raison !== "pas-pretes") return { ton: "info", texte: "Pas de vidéo prévue demain" };
+  if (d.etat === "rien" && d.raison !== "pas-pretes") return { ton: "info", texte: "Pas de vidéo demain" };
   return null;
 }
 

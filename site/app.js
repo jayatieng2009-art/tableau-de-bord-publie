@@ -14,9 +14,7 @@ import {
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
 const SVG = "http://www.w3.org/2000/svg";
-const HEURES_STATISTIQUES_PERIMEES = 36;
 
-const NOMS_SOURCES = { "local-pc": "Relevé du PC" };
 const STATUTS_CONNUS = ["ok", "introuvable", "pas-de-git", "aucun-commit", "erreur"];
 
 const message = document.getElementById("message");
@@ -498,11 +496,8 @@ function carteFallingPickaxe(projet, maintenant) {
     lien("Page de la chaîne", lienChaine(chaineId)),
   );
 
-  const alertesLive = alertesFalling(d, maintenant);
-  for (const alerte of alertesLive.slice(0, 2)) carte.append(el("p", `alerte alerte-${alerte.niveau}`, alerte.texte));
-  if (alertesLive.length > 2) {
-    carte.append(sectionFp(`Voir les ${alertesLive.length - 2} autres alertes`, false, ...alertesLive.slice(2).map((a) => el("p", `alerte alerte-${a.niveau}`, a.texte))));
-  }
+  const alerteLive = alertesFalling(d, maintenant).find((a) => a.niveau === "erreur"); // seule une vraie panne est montrée, sur une ligne
+  if (alerteLive) carte.append(el("p", `alerte alerte-${alerteLive.niveau}`, alerteLive.texte));
 
   const zoneCommandes = el("section", "fp-commandes");
   zoneCommandes.hidden = true; // montrée seulement si le serveur privé propose des commandes
@@ -512,7 +507,7 @@ function carteFallingPickaxe(projet, maintenant) {
   const chiffres = el("div", "grosses-tuiles");
   const depuisBilan = (valeur, precedent) => {
     const v = variation(valeur, precedent);
-    return v.sens === "inconnu" ? "" : `${v.texte} depuis le bilan précédent`;
+    return v.sens === "inconnu" ? "" : v.texte;
   };
   chiffres.append(
     grosseTuile({ ton: "success", valeur: formaterNombre(chaine.abonnes), libelle: "abonnés", detail: depuisBilan(chaine.abonnes, chaine.abonnes_veille) }, "👥"),
@@ -521,18 +516,9 @@ function carteFallingPickaxe(projet, maintenant) {
   carte.append(chiffres, el("p", "discret", `${formaterNombre(chaine.videos)} vidéos sur la chaîne`));
   const ages = el("p", "discret fp-ages");
   const majAbonnes = chaine.maj_abonnes ? ageLisible(chaine.maj_abonnes, maintenant) : "date inconnue";
-  const majChiffres = typeof chaine.maj_chiffres === "string" && !Number.isNaN(Date.parse(chaine.maj_chiffres))
-    ? `${dateLocale(chaine.maj_chiffres)} (${ageLisible(chaine.maj_chiffres, maintenant)})`
-    : "date inconnue";
-  ages.append(`Abonnés mis à jour : ${majAbonnes} · Autres chiffres : ${majChiffres}`);
-  if (estPerime(chaine.maj_chiffres, maintenant, HEURES_STATISTIQUES_PERIMEES)) {
-    ages.append(" ", el("span", "badge-perime", "Périmé"));
-  }
+  ages.append(`Mis à jour ${majAbonnes}`);
   const courbes = el("div", "fp-courbes");
   courbes.append(blocCourbe("Abonnés", courbe, "abonnes"), blocCourbe("Vues", courbe, "vues"));
-  if (estPerime(chaine.maj_chiffres, maintenant, HEURES_STATISTIQUES_PERIMEES)) {
-    carte.append(el("p", "alerte alerte-avertissement", `Les chiffres de la chaîne datent de plus de ${HEURES_STATISTIQUES_PERIMEES} h : ne vous y fiez pas.`));
-  }
 
   const aVenir = videos
     .filter((v) => v.programme === true && Date.parse(v.publie_pour) > maintenant.getTime())
@@ -611,12 +597,10 @@ function blocAlertes(alertes) {
   return zone;
 }
 
-// Les deux plus graves alertes ; les suivantes derrière « Voir les n autres ».
-function blocAlertesCourt(alertes, max = 2) {
-  const triees = trierAlertes(alertes);
-  const zone = blocAlertes(triees.slice(0, max));
-  if (triees.length > max) zone.append(sectionFp(`Voir les ${triees.length - max} autres`, false, blocAlertes(triees.slice(max, 25))));
-  return zone;
+// Seules les alertes qui demandent un geste ou signalent une panne sont montrées (deux lignes au plus) : le reste est du bruit.
+// La pile de concours dit déjà combien il en reste à décider.
+function alertesUtiles(alertes, max = 2) {
+  return trierAlertes(alertes).filter((a) => ["erreur", "avertissement", "action"].includes(a.niveau) && !estRappelDeDecision(a.texte)).slice(0, max);
 }
 
 const TONS = new Set(["accent", "success", "warning", "danger", "neutre"]);
@@ -790,7 +774,7 @@ function zoneDecision(c, options = {}) {
     emplacement.replaceChildren();
     const ordre = c.ordre === "ok" || c.ordre === "no" ? c.ordre : ordresEnvoyes.get(c.code);
     if (libelleOrdre(ordre)) {
-      emplacement.append(el("span", "badge-attention", libelleOrdre(ordre)), el("span", "discret", `Le bot l'applique à son prochain passage${textePassage()}.`));
+      emplacement.append(el("span", "badge-attention", libelleOrdre(ordre)), el("span", "discret", "En attente du bot"));
       return;
     }
     if (c.approuve === true) emplacement.append(el("span", "badge-ok", "Accepté : publication au prochain passage"));
@@ -822,7 +806,7 @@ function zoneDecision(c, options = {}) {
       }
       if (EN_LIGNE && reponse.json && Number.isInteger(reponse.json.numero)) numerosOrdres.set(c.code, reponse.json.numero);
       ordresEnvoyes.set(c.code, action);
-      ecrireMessage(message, `Ordre envoyé : le bot l'appliquera à son prochain passage${textePassage()}.`, "ok");
+      ecrireMessage(message, "Envoyé ✓", "ok");
       dessiner();
       if (typeof options.apres === "function") options.apres(action);
     } finally {
@@ -930,7 +914,7 @@ function pileConcours(cartes, maintenant) {
       const { code } = dernierOrdre;
       bloc.append(bouton("Annuler cet ordre", "bouton-secondaire", async () => {
         const reprise = await reprendreDecision(code);
-        confirmationPile = reprise.ok ? "Décision annulée : le concours revient dans la pile." : reprise.erreur;
+        confirmationPile = reprise.ok ? "Annulé : le concours revient." : reprise.erreur;
         dernierOrdre = null;
         dessiner();
       }));
@@ -967,7 +951,7 @@ function pileConcours(cartes, maintenant) {
         dernierOrdre = null;
         confirmationPile = resultat.erreur
           ? `${resultat.envoyes} refus envoyés, puis arrêt : ${resultat.erreur}`
-          : `${resultat.envoyes} refus envoyés${resultat.ignores > 0 ? ` (${resultat.ignores} déjà en attente)` : ""} : le bot les appliquera à son prochain passage${textePassage()}.`;
+          : `${resultat.envoyes} refus envoyés ✓`;
         dessiner();
       });
       const non = bouton("Annuler", "bouton-secondaire", () => {
@@ -976,7 +960,7 @@ function pileConcours(cartes, maintenant) {
       });
       panneau.replaceChildren(
         el("p", "cmd-titre", `Refuser ${n} concours ?`),
-        el("p", "cmd-avertissement", `${groupe.libelle} : le bot les oubliera pour de bon à son prochain passage. L'envoi se fait un par un, avec une courte pause : comptez environ ${Math.ceil((n * (PAUSE_ENTRE_ORDRES_MS + 300)) / 1000)} s.`),
+        el("p", "cmd-avertissement", `${groupe.libelle} · environ ${Math.ceil((n * (PAUSE_ENTRE_ORDRES_MS + 300)) / 1000)} s`),
         groupeDeLiens("cmd-actions", oui, non), message,
       );
     };
@@ -996,7 +980,7 @@ function pileConcours(cartes, maintenant) {
     const noeuds = [entete];
     if (confirmationPile) noeuds.push(blocConfirmation());
     if (toute.length === 0) {
-      noeuds.push(el("p", "discret pile-vide", "Plus aucun concours à décider. Le bot en ajoute de nouveaux à chaque passage."));
+      noeuds.push(el("p", "discret pile-vide", "Tout est décidé ✓"));
       zone.replaceChildren(...noeuds);
       return;
     }
@@ -1042,7 +1026,7 @@ function pileConcours(cartes, maintenant) {
       grand: true,
       apres: (action) => {
         dernierOrdre = { code: c.code };
-        confirmationPile = `${action === "ok" ? "Publication" : "Refus"} envoyé pour « ${p.titre} » : le bot l'appliquera à son prochain passage${textePassage()}.`;
+        confirmationPile = `${action === "ok" ? "✅ Publié" : "❌ Refusé"} : ${abreger(p.titre, 45)}`;
         dessiner();
       },
     }));
@@ -1089,20 +1073,15 @@ function carteConcours(projet, maintenant) {
   depotConcours = depotDepuisLien(liens.depot);
   const carte = el("article", "carte carte-large");
 
-  const alertes = trierAlertes([
-    ...liste(d.a_faire),
-    ...(Array.isArray(d.avertissements) ? d.avertissements.filter((x) => typeof x === "string").map((texte) => ({ niveau: "avertissement", texte })) : []),
-  ]);
+  const alertes = liste(d.a_faire);
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", String(projet.nom ?? "Concours Gratuits FR")));
-  const aSurveiller = alertes.some((a) => a.niveau === "avertissement" || a.niveau === "erreur");
-  entete.append(aSurveiller ? el("span", "badge-attention", "À surveiller") : el("span", "badge-ok", "Rien d'anormal"));
   entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
   carte.append(entete);
 
-  // Les vidéos de demain dans le groupe Telegram : une ligne d'état (les problèmes sont dits plus bas, avec les alertes) et un appui pour ouvrir le groupe.
+  // Les vidéos de demain dans le groupe Telegram : une ligne d'état (les problèmes sont dits plus bas, avec les alertes) et un appui pour ouvrir chaque groupe.
   const videosDeDemain = ligneVideosDeDemain(d.videos_du_jour);
-  const groupes = liste(d.groupes).map((g) => lien(`Ouvrir le groupe « ${titreSur(g.nom)} »`, lienPlateforme(g.lien), "lien lien-principal")).filter(Boolean);
+  const groupes = liste(d.groupes).map((g) => lien(`📹 ${titreSur(g.nom)}`, lienPlateforme(g.lien), "lien lien-principal")).filter(Boolean);
   if (videosDeDemain) carte.append(el("p", videosDeDemain.ton === "ok" ? "texte-ok" : "discret", `${videosDeDemain.ton === "ok" ? "✅" : "⏳"} ${videosDeDemain.texte}`));
   if (groupes.length > 0) carte.append(groupeDeLiens("fp-acces", ...groupes));
 
@@ -1112,9 +1091,8 @@ function carteConcours(projet, maintenant) {
     lien("Passages du bot (GitHub)", lienPlateforme(liens.actions)),
     lien("Dépôt du bot", lienPlateforme(liens.depot)),
   );
-  const importantes = alertes.filter((a) => a.niveau !== "info" && !estRappelDeDecision(a.texte)); // la pile ci-dessous dit déjà combien il en reste
-  const rappels = alertes.filter((a) => a.niveau === "info");
-  if (importantes.length > 0) carte.append(blocAlertesCourt(importantes));
+  const importantes = alertesUtiles(alertes);
+  if (importantes.length > 0) carte.append(blocAlertes(importantes));
 
   // L'essentiel : les concours à décider, un par un. Tout le reste est rangé dans « Plus de détails ».
   const plus = [];
@@ -1181,7 +1159,6 @@ function carteConcours(projet, maintenant) {
     + (typeof d.derniere_activite === "string" ? ` · Dernière mémoire enregistrée ${ageLisible(d.derniere_activite, maintenant)}` : ""),
   ));
   plus.push(sectionFp("Abonnés et suivi du bot", false, ...suivi));
-  if (rappels.length > 0) plus.push(sectionFp(`Rappels (${rappels.length})`, false, blocAlertes(rappels)));
   plus.push(sectionFp(`Derniers concours publiés (${liste(d.publies_recents).length})`, false, listeFp(
     liste(d.publies_recents).map((p) => ligneFp(
       p.titre,
@@ -1251,8 +1228,7 @@ function carteProduits(projet, maintenant) {
     lien("TikTok Studio : publier", "https://www.tiktok.com/tiktokstudio/upload"),
     lien("TikTok Studio : contenu", "https://www.tiktok.com/tiktokstudio/content"),
   ));
-  const alertes = trierAlertes(liste(d.a_faire));
-  const importantes = alertes.filter((a) => a.niveau !== "info");
+  const importantes = alertesUtiles(liste(d.a_faire));
   if (importantes.length > 0) carte.append(blocAlertes(importantes));
 
   const chiffres = el("div", "fp-chiffres");
@@ -1278,8 +1254,6 @@ function carteProduits(projet, maintenant) {
     groupe("Déjà fait", false, calendrier.faits),
     groupe("En réserve", false, calendrier.reserve),
   );
-  const rappelsProduits = alertes.filter((a) => a.niveau === "info");
-  if (rappelsProduits.length > 0) carte.append(sectionFp(`Rappels (${rappelsProduits.length})`, false, blocAlertes(rappelsProduits)));
   const produits = liste(d.produits);
   carte.append(sectionFp(`Produits (${produits.length})`, false, listeFp(
     produits.map((p) => {
@@ -1422,11 +1396,8 @@ function carteTiktok(projet, maintenant) {
   const comptes = liste(d.comptes);
   const carte = el("article", "carte carte-large");
   carte.append(enteteDeCarte(projet, "Analytiques TikTok", comptes.length > 0 ? el("span", "badge-ok", `${comptes.length} compte(s)`) : el("span", "badge-attention", "À configurer")));
-  const alertes = trierAlertes([
-    ...liste(d.a_faire),
-    ...(Array.isArray(d.avertissements) ? d.avertissements.filter((x) => typeof x === "string").map((texte) => ({ niveau: "avertissement", texte })) : []),
-  ]);
-  if (alertes.length > 0) carte.append(blocAlertesCourt(alertes));
+  const alertes = alertesUtiles(liste(d.a_faire));
+  if (alertes.length > 0) carte.append(blocAlertes(alertes));
   const plus = []; // tout ce qui n'est pas l'essentiel : repliés dans « Plus de détails »
   for (const c of comptes) {
     carte.append(el("p", "cmd-titre", `@${String(c.compte)}${typeof c.nom === "string" ? ` (${c.nom})` : ""}`));
@@ -1979,13 +1950,13 @@ function blocAccueil(projets, etat, maintenant) {
     return ligne;
   };
   const carte = el("article", "carte carte-large");
-  carte.append(el("p", "cmd-titre", groupes.length > 0 ? "À faire en premier" : "Rien d'urgent"));
+  carte.append(el("p", "cmd-titre", groupes.length > 0 ? "À faire" : "Rien à faire ✓"));
   for (const groupe of groupes.slice(0, MAX_A_FAIRE)) carte.append(ligneDe(groupe));
-  if (groupes.length > MAX_A_FAIRE) carte.append(sectionFp(`Voir le reste (${groupes.length - MAX_A_FAIRE})`, false, ...groupes.slice(MAX_A_FAIRE).map(ligneDe)));
+  if (groupes.length > MAX_A_FAIRE) carte.append(sectionFp(`+${groupes.length - MAX_A_FAIRE}`, false, ...groupes.slice(MAX_A_FAIRE).map(ligneDe)));
   if (agenda.length > 0) {
-    carte.append(el("p", "accueil-rdv", `Prochain rendez-vous : ${agenda[0].texte} · ${delaiAvant(agenda[0].quand, maintenant)}`));
+    carte.append(el("p", "accueil-rdv", `Prochain : ${agenda[0].texte} · ${delaiAvant(agenda[0].quand, maintenant)}`));
     if (agenda.length > 1) {
-      carte.append(sectionFp(`Voir les ${agenda.length - 1} suivants`, false, listeFp(
+      carte.append(sectionFp(`+${agenda.length - 1}`, false, listeFp(
         agenda.slice(1).map((e) => ligneFp(e.texte, `${delaiAvant(e.quand, maintenant)} · ${rendezVous({ quand: e.quand })} · ${e.source}`)),
         "",
       )));
@@ -1998,7 +1969,7 @@ function blocAccueil(projets, etat, maintenant) {
     barre.value = objectif.pct;
     barre.setAttribute("aria-label", "Progression vers l'objectif d'abonnés Telegram");
     carte.append(
-      el("p", "accueil-rdv", `Objectif Telegram : ${formaterNombre(objectif.abonnes)} sur ${formaterNombre(objectif.objectif)} abonnés (${objectif.pct} %), il en reste ${formaterNombre(objectif.restant)}.`),
+      el("p", "accueil-rdv", `Telegram : ${formaterNombre(objectif.abonnes)} / ${formaterNombre(objectif.objectif)}`),
       barre,
     );
   }
@@ -2138,10 +2109,6 @@ function afficher(paquet) {
   } catch {
     rapprochement = { parLocal: {}, sansDossier: [], disponible: false };
   }
-  // Une source périmée (PC éteint, collecte arrêtée) est signalée en haut, avant tout onglet.
-  const peremptions = sources
-    .filter(([, r]) => estPerime(r.releve_a, maintenant, r.seuil_perime_heures))
-    .map(([id, r]) => el("p", "avertissement", `${NOMS_SOURCES[id] ?? id} : ces données sont anciennes (PC éteint ou collecte arrêtée), ne vous y fiez pas. Mises à jour ${ageLisible(r.releve_a, maintenant)}.`));
   let vue = null;
   try {
     vue = blocAccueil(projets, etatRevenus, maintenant);
@@ -2196,8 +2163,8 @@ function afficher(paquet) {
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);
   }
-  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant, chargeEnLigne.cloud_a) : null;
-  const noeuds = [...(pcEteint ? [el("p", "avertissement", pcEteint)] : []), ...peremptions];
+  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant, chargeEnLigne.cloud_a) : null; // dit dans le sous-titre, sans bandeau
+  const noeuds = [];
   if (onglets.length === 0) {
     noeuds.push(el("p", "discret", "Aucun projet dans ce relevé."));
   } else if (onglets.length === 1) {
@@ -2213,8 +2180,8 @@ function afficher(paquet) {
   contenu.hidden = false;
   message.textContent = "";
   generation.textContent = EN_LIGNE && chargeEnLigne
-    ? `Données relevées sur le PC ${ageLisible(paquet.genere_a, maintenant)} · publiées ${ageLisible(chargeEnLigne.publie_a, maintenant)}`
-    : `Page générée ${ageLisible(paquet.genere_a, maintenant)}`;
+    ? (pcEteint ?? `Mis à jour ${ageLisible(chargeEnLigne.publie_a, maintenant)}`)
+    : `Mis à jour ${ageLisible(paquet.genere_a, maintenant)}`;
 }
 
 // ---------- Mode en ligne : page publique, données chiffrées, boutons ✅ / ❌ par la boîte aux ordres de GitHub ----------
