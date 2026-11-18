@@ -1229,3 +1229,55 @@ const ICONES_SVG = {
 export function traitsIcone(id) {
   return typeof id === "string" && Object.hasOwn(ICONES_SVG, id) ? ICONES_SVG[id] : ICONES_SVG.autres;
 }
+
+// ---------- Tri rapide des concours : on passe au suivant tout de suite, les décisions partent en fond, dans l'ordre ----------
+
+export const DELAI_ANNULATION_MS = 2500; // le temps d'appuyer sur « Annuler » avant que la décision parte vraiment
+const CODE_CARTE = /^[0-9a-f]{10}$/;
+const TITRE_FILE_MAX = 120;
+const FILE_ENVOI_MAX = 100;
+
+const entreeDeFile = (code, action, titre, pret) => ({
+  code, action, titre: typeof titre === "string" ? titre.slice(0, TITRE_FILE_MAX) : "", pret: estNombre(pret) ? pret : 0,
+});
+const decisionValide = (code, action) => typeof code === "string" && CODE_CARTE.test(code) && (action === "ok" || action === "no");
+
+// La file gardée dans le téléphone, relue : seulement des entrées valides, une par concours (la plus récente), 100 au plus.
+export function fileEnvoiValide(liste) {
+  if (!Array.isArray(liste)) return [];
+  let file = [];
+  for (const e of liste) {
+    if (!e || typeof e !== "object" || !decisionValide(e.code, e.action)) continue;
+    file = file.filter((x) => x.code !== e.code);
+    file.push(entreeDeFile(e.code, e.action, e.titre, e.pret));
+  }
+  return file.slice(-FILE_ENVOI_MAX);
+}
+
+// Ajoute une décision au bout de la file (elle part après le délai d'annulation) ; remplace celle du même concours si elle n'est pas partie.
+export function ajouterDecision(file, code, action, titre, maintenantMs) {
+  const base = Array.isArray(file) ? file : [];
+  if (!decisionValide(code, action)) return base;
+  const depart = (estNombre(maintenantMs) ? maintenantMs : 0) + DELAI_ANNULATION_MS;
+  return [...base.filter((e) => e.code !== code), entreeDeFile(code, action, titre, depart)];
+}
+
+export function retirerDecision(file, code) {
+  return Array.isArray(file) ? file.filter((e) => e.code !== code) : [];
+}
+
+// La décision à envoyer maintenant (la première de la file, si son délai d'annulation est passé), ou combien attendre.
+export function prochainEnvoi(file, maintenantMs) {
+  if (!Array.isArray(file) || file.length === 0) return { entree: null, attenteMs: null };
+  const premiere = file[0];
+  return premiere.pret <= maintenantMs ? { entree: premiere, attenteMs: 0 } : { entree: null, attenteMs: premiere.pret - maintenantMs };
+}
+
+const TOUCHES_DE_TRI = { ArrowRight: "ok", ArrowLeft: "no", ArrowDown: "passer" };
+
+// Au clavier (ordinateur) : → publier, ← refuser, ↓ passer. Rien pendant que l'on écrit dans un champ ou avec Ctrl, Cmd, Alt.
+export function toucheDeTri(touche) {
+  const t = touche && typeof touche === "object" ? touche : {};
+  if (t.dansUnChamp || t.ctrlKey || t.metaKey || t.altKey) return null;
+  return typeof t.key === "string" && Object.hasOwn(TOUCHES_DE_TRI, t.key) ? TOUCHES_DE_TRI[t.key] : null;
+}

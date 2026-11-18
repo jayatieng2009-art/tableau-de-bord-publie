@@ -371,8 +371,8 @@ body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2
 .pile-carte[data-glisse]::after { position: absolute; top: 12px; font-size: 0.95rem; font-weight: 800; }
 .pile-carte[data-glisse="ok"]::after { content: "✅ Publier"; left: 16px; }
 .pile-carte[data-glisse="no"]::after { content: "❌ Refuser"; right: 16px; }
-.pile-carte.envol-ok { transform: translateX(120%) rotate(14deg); opacity: 0; transition: transform 0.34s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.34s ease-in; }
-.pile-carte.envol-no { transform: translateX(-120%) rotate(-14deg); opacity: 0; transition: transform 0.34s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.34s ease-in; }
+.pile-carte.envol-ok { transform: translateX(120%) rotate(14deg); opacity: 0; transition: transform 0.22s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.22s ease-in; }
+.pile-carte.envol-no { transform: translateX(-120%) rotate(-14deg); opacity: 0; transition: transform 0.22s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.22s ease-in; }
 
 /* ---------- Bulle d'action (« ✅ Publié · Annuler ») ---------- */
 .bulle {
@@ -393,3 +393,10 @@ body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- Tri rapide : compteur des décisions qui partent en fond, aide clavier (ordinateur seulement) ---------- */
+.pile-entete h3 { margin-right: auto; }
+.badge-envoi { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--neutre-fond); color: var(--neutre-texte); font-size: 0.8125rem; font-weight: 700; }
+.badge-envoi[hidden] { display: none; }
+.pile-astuce { display: none; margin-top: 8px; font-size: 0.8125rem; text-align: center; }
+@media (hover: hover) and (pointer: fine) { .pile-astuce { display: block; } }

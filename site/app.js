@@ -12,6 +12,7 @@ import {
   ordresProspectionEnAttente, reponseDuWorkflow, messageListeProspection, ligneVideosDeDemain,
   doitRedessiner, empreinteDuRendu, directionGlisse, decisionDeGlisse, GLISSE_APERCU_PX, entierAnimable, valeurAnimee,
   zoneSousCourbe, dernierPoint, salutation, phraseAccueil, traitsIcone,
+  fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -262,7 +263,7 @@ function annoncer(texte, action) {
 // ---------- Glisser la carte d'un concours : à droite on publie, à gauche on refuse (les gros boutons restent) ----------
 
 // `trouverBouton(sens)` rend le vrai bouton « Publier » / « Refuser » (ou null s'il n'est pas disponible) : glisser revient à l'appuyer.
-// Si l'envoi échoue, la pile fait revenir la carte (option `echec` de zoneDecision).
+// Si l'envoi échoue plus tard, la file d'envoi fait revenir le concours dans la pile.
 function installerGlisse(carte, trouverBouton) {
   let doigt = null;
   const remettre = () => {
@@ -930,66 +931,151 @@ function sectionCleGithub() {
   );
 }
 
-// ✅ Publier / ❌ Refuser sur une carte du bot : un seul appui. La page enchaîne elle-même la demande et la confirmation (jeton de 30 s) :
-// plus de bouton « Confirmer ». Sur la page en ligne, « Annuler cet ordre » reprend la dernière décision tant que le bot ne l'a pas appliquée.
-// options.grand : gros boutons (pile de concours) ; options.apres(action) : appelé une fois l'ordre envoyé.
-function zoneDecision(c, options = {}) {
-  const grand = options.grand === true;
-  const zone = el("div", "cc-decision");
-  const emplacement = el("div", grand ? "cc-boutons cc-boutons-grands" : "cc-boutons");
-  const message = el("p", "cmd-message");
-  message.setAttribute("role", "status");
-  zone.append(emplacement, message);
+// ---------- Tri rapide : ✅ / ❌ font passer au concours suivant TOUT DE SUITE ; les décisions partent en fond, une par une ----------
+// La file est gardée dans le téléphone : une page fermée trop tôt reprend l'envoi à sa prochaine ouverture. Pendant 2,5 s, « Annuler »
+// retire la décision avant qu'elle parte ; après, sur la page en ligne, il ferme le ticket tant que le bot ne l'a pas lu.
 
-  function dessiner() {
-    emplacement.replaceChildren();
-    const ordre = c.ordre === "ok" || c.ordre === "no" ? c.ordre : ordresEnvoyes.get(c.code);
-    if (libelleOrdre(ordre)) {
-      emplacement.append(el("span", "badge-attention", libelleOrdre(ordre)), el("span", "discret", "En attente du bot"));
-      return;
-    }
-    if (c.approuve === true) emplacement.append(el("span", "badge-ok", "Accepté : publication au prochain passage"));
-    if (!decisionsDisponibles) return; // page sans commandes : lecture seule
-    const publier = c.approuve !== true ? bouton("✅ Publier", grand ? "bouton-grand bouton-publier" : "bouton-principal", () => demander("ok")) : null;
-    const refuser = bouton("❌ Refuser", grand ? "bouton-grand bouton-refuser" : "bouton-danger", () => demander("no"));
-    emplacement.append(...(grand ? [refuser, publier] : [publier, refuser]).filter(Boolean));
+const CLE_FILE_ENVOI = "tableau.decisions_a_envoyer";
+let fileEnvoi = lireFileGardee();
+let envoiEnVol = null; // { code, action, titre, annule } : la décision en train de partir
+let minuteurEnvoi = null;
+let majPile = { tout: () => {}, compteur: () => {} }; // rebranché par la pile affichée : tout redessiner, ou seulement le compteur d'envois
+let raccourcisPile = null; // { visible(), ok(), no(), passer() } : ce que font les flèches du clavier sur la pile affichée
+
+function lireFileGardee() {
+  try {
+    return fileEnvoiValide(JSON.parse(lireStockage(CLE_FILE_ENVOI) ?? "[]"));
+  } catch {
+    return [];
   }
-
-  async function demander(action) {
-    emplacement.querySelectorAll("button").forEach((b) => { b.disabled = true; });
-    confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant l'envoi
-    try {
-      let jeton = null;
-      if (!EN_LIGNE) { // page du PC : le serveur donne un jeton de 30 s, que l'on rend aussitôt (page en ligne : pas de serveur, l'ordre part à GitHub)
-        const demande = await poster("api/concours/demander", { action, code: c.code });
-        if (!demande.ok) {
-          ecrireMessage(message, demande.json && demande.json.erreur ? demande.json.erreur : "Décision impossible.", "erreur");
-          dessiner();
-          if (typeof options.echec === "function") options.echec();
-          return;
-        }
-        jeton = demande.json.jeton;
-      }
-      const reponse = EN_LIGNE ? await envoyerOrdreGithub(action, c.code) : await poster("api/concours/confirmer", { jeton });
-      if (!reponse.ok) {
-        ecrireMessage(message, reponse.json && reponse.json.erreur ? reponse.json.erreur : "Décision impossible.", "erreur");
-        dessiner();
-        if (typeof options.echec === "function") options.echec();
-        return;
-      }
-      if (EN_LIGNE && reponse.json && Number.isInteger(reponse.json.numero)) numerosOrdres.set(c.code, reponse.json.numero);
-      ordresEnvoyes.set(c.code, action);
-      ecrireMessage(message, "Envoyé ✓", "ok");
-      dessiner();
-      if (typeof options.apres === "function") options.apres(action);
-    } finally {
-      confirmationsOuvertes -= 1;
-    }
-  }
-
-  dessiner();
-  return zone;
 }
+
+function sauverFile() {
+  const aGarder = envoiEnVol ? [envoiEnVol, ...fileEnvoi] : fileEnvoi; // celle qui part reste gardée tant qu'elle n'est pas arrivée
+  if (aGarder.length === 0) oublierStockage(CLE_FILE_ENVOI);
+  else ecrireStockage(CLE_FILE_ENVOI, JSON.stringify(aGarder.map(({ code, action, titre, pret }) => ({ code, action, titre, pret }))));
+}
+
+// Les concours décidés ici mais pas encore arrivés : la pile les cache déjà.
+function codesEnEnvoi() {
+  const codes = new Set(fileEnvoi.map((e) => e.code));
+  if (envoiEnVol) codes.add(envoiEnVol.code);
+  return codes;
+}
+
+function actionEnEnvoi(code) {
+  if (envoiEnVol && envoiEnVol.code === code) return envoiEnVol.action;
+  const entree = fileEnvoi.find((e) => e.code === code);
+  return entree ? entree.action : undefined;
+}
+
+function decider(code, action, titre) {
+  fileEnvoi = ajouterDecision(fileEnvoi, code, action, titre, Date.now());
+  sauverFile();
+  majPile.compteur();
+  planifierEnvoi();
+}
+
+function planifierEnvoi() {
+  clearTimeout(minuteurEnvoi);
+  minuteurEnvoi = null;
+  if (envoiEnVol || !decisionsDisponibles) return;
+  const avant = fileEnvoi.length;
+  fileEnvoi = fileEnvoi.filter((e) => !ordresEnvoyes.has(e.code)); // déjà arrivé (vu sur GitHub au rechargement) : rien à renvoyer
+  if (fileEnvoi.length !== avant) sauverFile();
+  const { entree, attenteMs } = prochainEnvoi(fileEnvoi, Date.now());
+  if (entree) envoyerDecision(entree);
+  else if (attenteMs !== null) minuteurEnvoi = setTimeout(planifierEnvoi, attenteMs);
+}
+
+// Un ordre du tri : page du PC, le serveur donne un jeton de 30 s, rendu aussitôt ; page en ligne, un ticket GitHub.
+async function envoyerOrdreConcours(action, code) {
+  if (EN_LIGNE) return envoyerOrdreGithub(action, code);
+  const demande = await poster("api/concours/demander", { action, code });
+  if (!demande.ok) return demande;
+  return poster("api/concours/confirmer", { jeton: demande.json ? demande.json.jeton : null });
+}
+
+async function envoyerDecision(entree) {
+  envoiEnVol = entree;
+  fileEnvoi = retirerDecision(fileEnvoi, entree.code);
+  confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant l'envoi
+  let reponse;
+  try {
+    reponse = await envoyerOrdreConcours(entree.action, entree.code);
+  } catch {
+    reponse = { ok: false, json: { erreur: "Envoi impossible pour le moment." } };
+  } finally {
+    confirmationsOuvertes -= 1;
+  }
+  envoiEnVol = null;
+  if (reponse.ok) {
+    ordresEnvoyes.set(entree.code, entree.action);
+    if (reponse.json && Number.isInteger(reponse.json.numero)) numerosOrdres.set(entree.code, reponse.json.numero);
+  }
+  sauverFile();
+  if (!reponse.ok) {
+    const erreur = reponse.json && reponse.json.erreur ? reponse.json.erreur : "Décision impossible.";
+    annoncer(`⚠️ Pas envoyé (${abreger(entree.titre || "un concours", 30)}) : ${erreur} Il revient dans la pile.`);
+    majPile.tout();
+  } else if (entree.annule) {
+    await annulerApresEnvoi(entree.code);
+  } else {
+    majPile.compteur();
+  }
+  // GitHub refuse les tickets trop rapprochés : petite pause entre deux envois en ligne ; après un échec, on souffle un peu.
+  minuteurEnvoi = setTimeout(planifierEnvoi, !reponse.ok ? 3000 : EN_LIGNE ? PAUSE_ENTRE_ORDRES_MS : 0);
+}
+
+async function annulerApresEnvoi(code) {
+  if (EN_LIGNE && numerosOrdres.has(code)) {
+    const reprise = await reprendreDecision(code);
+    annoncer(reprise.ok ? "Annulé : le concours revient." : reprise.erreur);
+  } else {
+    annoncer("Trop tard : la décision était déjà partie vers le bot.");
+  }
+  majPile.tout();
+}
+
+// « Annuler » de la bulle : pas encore partie, on la retire ; en route, on la reprend dès qu'elle arrive ; partie, on ferme son ticket (en ligne).
+async function annulerDecision(code) {
+  if (fileEnvoi.some((e) => e.code === code)) {
+    fileEnvoi = retirerDecision(fileEnvoi, code);
+    sauverFile();
+    annoncer("Annulé : le concours revient.");
+    majPile.tout();
+    planifierEnvoi();
+    return;
+  }
+  if (envoiEnVol && envoiEnVol.code === code) {
+    envoiEnVol.annule = true;
+    annoncer("Annulation en cours…");
+    return;
+  }
+  await annulerApresEnvoi(code);
+}
+
+function annulerLot(codes) {
+  const avant = fileEnvoi.length;
+  fileEnvoi = fileEnvoi.filter((e) => !codes.includes(e.code));
+  const annules = avant - fileEnvoi.length;
+  sauverFile();
+  majPile.tout();
+  planifierEnvoi();
+  const partis = codes.length - annules;
+  annoncer(partis > 0 ? `${annules} refus annulés, ${partis} déjà partis.` : `${annules} refus annulés : ils reviennent dans la pile.`);
+}
+
+// Au clavier (ordinateur) : → publier, ← refuser, ↓ passer, quand la rubrique Concours est affichée.
+document.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || !raccourcisPile || !raccourcisPile.visible()) return;
+  const cible = e.target;
+  const dansUnChamp = cible instanceof HTMLElement && (cible.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(cible.tagName));
+  const geste = toucheDeTri({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, dansUnChamp });
+  if (!geste || typeof raccourcisPile[geste] !== "function") return;
+  e.preventDefault();
+  raccourcisPile[geste]();
+});
 
 const reportesConcours = []; // codes passés « pour plus tard » : renvoyés au bout de la pile (jusqu'au rechargement de la page)
 let filtreConcours = {}; // { plateforme, urgent } : ce que la pile montre
@@ -1019,56 +1105,21 @@ async function reprendreDecision(code) {
   return { ok: true };
 }
 
-// Refuse plusieurs concours d'un coup (page en ligne) : un ticket par concours, avec une pause entre deux ; s'arrête au premier refus de GitHub.
-async function refuserEnLot(codes, progression) {
-  const jeton = lireJetonGithub();
-  if (!jeton || !depotConcours) return { envoyes: 0, ignores: 0, erreur: "Aucune clé GitHub n'est enregistrée sur cet appareil." };
-  const base = `https://api.github.com/repos/${depotConcours}/issues`;
-  let dejaOuverts;
-  try {
-    const liste = await fetch(`${base}?state=open&per_page=100`, { headers: enTetesGithub(jeton), cache: "no-store" });
-    if (!liste.ok) return { envoyes: 0, ignores: 0, erreur: messageErreurGithub(liste.status) };
-    const tickets = await liste.json();
-    dejaOuverts = new Set((Array.isArray(tickets) ? tickets : []).map((t) => t && t.title).filter(Boolean));
-  } catch {
-    return { envoyes: 0, ignores: 0, erreur: "GitHub est injoignable : réessaie dans un moment." };
-  }
-  let envoyes = 0;
-  let ignores = 0;
-  for (const code of codes) {
-    if (!/^[0-9a-f]{10}$/.test(code) || dejaOuverts.has(`ok_${code}`) || dejaOuverts.has(`no_${code}`)) {
-      ignores += 1;
-      continue;
-    }
-    progression(envoyes + ignores, codes.length);
-    try {
-      const reponse = await fetch(base, {
-        method: "POST", headers: { ...enTetesGithub(jeton), "Content-Type": "application/json" },
-        body: JSON.stringify({ title: `no_${code}`, body: "Ordre donné depuis la page en ligne du tableau de bord (refus en lot)." }),
-      });
-      if (reponse.status !== 201) return { envoyes, ignores, erreur: messageErreurGithub(reponse.status) };
-      ordresEnvoyes.set(code, "no");
-      try {
-        numerosOrdres.set(code, (await reponse.json()).number);
-      } catch {
-        // sans numéro, seul « Reprendre » est indisponible pour ce concours
-      }
-      envoyes += 1;
-    } catch {
-      return { envoyes, ignores, erreur: "GitHub est injoignable : réessaie dans un moment." };
-    }
-    await pause(PAUSE_ENTRE_ORDRES_MS);
-  }
-  return { envoyes, ignores, erreur: null };
-}
-
-// Les concours à décider, un par un : le lot en grand, deux gros boutons, « Passer » pour y revenir plus tard,
-// des filtres (plateforme, fin proche) et, sur la page en ligne, un refus en lot.
+// Les concours à décider, un par un : le lot en grand, deux gros boutons (ou glisser la carte, ou les flèches du clavier), « Passer » pour
+// y revenir plus tard, des filtres (plateforme, fin proche) et un refus en lot. Décider fait passer au suivant tout de suite (envoi en fond).
 function pileConcours(cartes, maintenant) {
   const zone = el("section", "pile");
   zone.setAttribute("aria-label", "Concours à décider");
   let panneauLot = false; // le panneau « Refuser en lot » est-il ouvert ?
   const filtreActif = () => Boolean(filtreConcours.plateforme) || filtreConcours.urgent === true;
+  const badgeEnvoi = el("span", "badge-envoi");
+  badgeEnvoi.setAttribute("role", "status");
+  const majCompteur = () => {
+    const n = codesEnEnvoi().size;
+    badgeEnvoi.textContent = n > 0 ? `⏳ ${n} en envoi` : "";
+    badgeEnvoi.hidden = n === 0;
+  };
+  majPile = { tout: () => dessiner(), compteur: majCompteur };
 
   function puce(libelle, actif, auClic) {
     const b = el("button", actif ? "puce puce-active" : "puce", libelle);
@@ -1078,48 +1129,29 @@ function pileConcours(cartes, maintenant) {
     return b;
   }
 
-  // « Annuler » de la bulle (page en ligne : l'ordre est un ticket GitHub que l'on peut reprendre tant que le bot ne l'a pas lu).
-  function actionAnnuler(code) {
-    if (!EN_LIGNE || !numerosOrdres.has(code)) return null;
-    return {
-      libelle: "Annuler",
-      auClic: async () => {
-        const reprise = await reprendreDecision(code);
-        annoncer(reprise.ok ? "Annulé : le concours revient." : reprise.erreur);
-        dessiner();
-      },
-    };
-  }
-
-  function panneauDeLots(groupes) {
+  function panneauDeLots(groupes, titres) {
     const panneau = el("div", "pile-lots");
-    const message = el("p", "cmd-message");
-    message.setAttribute("role", "status");
     const choisir = () => {
       panneau.replaceChildren(el("p", "cmd-titre", "Refuser en lot"), ...groupes.map((g) => bouton(g.libelle, "bouton-secondaire", () => confirmer(g))),
         bouton("Fermer", "bouton-secondaire", () => {
           panneauLot = false;
           dessiner();
-        }), message);
+        }));
     };
     const confirmer = (groupe) => {
       const n = groupe.codes.length;
-      confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant l'envoi
+      confirmationsOuvertes += 1; // la page ne se rafraîchit pas toute seule pendant la confirmation
       let ferme = false;
       const fermer = () => {
         if (ferme) return;
         ferme = true;
         confirmationsOuvertes -= 1;
       };
-      const oui = bouton("Confirmer", "bouton-danger", async () => {
-        oui.disabled = true;
-        non.disabled = true;
-        const resultat = await refuserEnLot(groupe.codes, (fait) => ecrireMessage(message, `Envoi en cours : ${fait} sur ${n}…`, "info"));
+      const oui = bouton("Confirmer", "bouton-danger", () => {
         fermer();
+        for (const code of groupe.codes) decider(code, "no", titres.get(code) ?? "");
         panneauLot = false;
-        annoncer(resultat.erreur
-          ? `${resultat.envoyes} refus envoyés, puis arrêt : ${resultat.erreur}`
-          : `${resultat.envoyes} refus envoyés ✓`);
+        annoncer(`❌ ${n} refus : ils partent en fond.`, { libelle: "Annuler", auClic: () => annulerLot(groupe.codes) });
         dessiner();
       });
       const non = bouton("Annuler", "bouton-secondaire", () => {
@@ -1128,8 +1160,8 @@ function pileConcours(cartes, maintenant) {
       });
       panneau.replaceChildren(
         el("p", "cmd-titre", `Refuser ${n} concours ?`),
-        el("p", "cmd-avertissement", `${groupe.libelle} · environ ${Math.ceil((n * (PAUSE_ENTRE_ORDRES_MS + 300)) / 1000)} s`),
-        groupeDeLiens("cmd-actions", oui, non), message,
+        el("p", "cmd-avertissement", `${groupe.libelle} · ils partent en fond, tu peux continuer`),
+        groupeDeLiens("cmd-actions", oui, non),
       );
     };
     choisir();
@@ -1137,15 +1169,18 @@ function pileConcours(cartes, maintenant) {
   }
 
   function dessiner() {
-    const options = { maintenant, masques: new Set(ordresEnvoyes.keys()), reportes: reportesConcours };
+    const options = { maintenant, masques: new Set([...ordresEnvoyes.keys(), ...codesEnEnvoi()]), reportes: reportesConcours };
     const toute = pileDeConcours(cartes, options);
     const pile = pileDeConcours(cartes, { ...options, filtre: filtreConcours });
     const entete = el("div", "pile-entete");
+    majCompteur();
     entete.append(
       el("h3", "", "À décider"),
+      badgeEnvoi,
       toute.length > 0 ? el("span", "badge-compteur", filtreActif() ? `${pile.length} sur ${toute.length}` : `${toute.length} à décider`) : el("span", "badge-ok", "Tout est décidé"),
     );
     const noeuds = [entete];
+    raccourcisPile = null;
     if (toute.length === 0) {
       noeuds.push(el("p", "discret pile-vide", "Tout est décidé ✓"));
       zone.replaceChildren(...noeuds);
@@ -1189,48 +1224,59 @@ function pileConcours(cartes, maintenant) {
     noeuds.push(grande);
     const voir = lien("Voir le concours", lienPlateforme(c.url), "lien lien-pile");
     if (voir) noeuds.push(voir);
-    const boutonDe = (sens) => {
-      const b = zone.querySelector(sens === "ok" ? ".bouton-publier" : ".bouton-refuser");
-      return b && !b.disabled ? b : null;
+
+    // Décider : la décision part en fond, la carte s'envole et la suivante arrive tout de suite.
+    let tranche = false;
+    const trancher = (action) => {
+      if (tranche || !decisionsDisponibles) return;
+      tranche = true;
+      decider(c.code, action, p.titre);
+      annoncer(`${action === "ok" ? "✅ Publié" : "❌ Refusé"} : ${abreger(p.titre, 45)}`, { libelle: "Annuler", auClic: () => annulerDecision(c.code) });
+      if (sansMouvement()) {
+        dessiner();
+        return;
+      }
+      grande.classList.add(action === "ok" ? "envol-ok" : "envol-no");
+      setTimeout(dessiner, 180);
     };
-    installerGlisse(grande, boutonDe);
-    noeuds.push(zoneDecision(c, {
-      grand: true,
-      apres: (action) => {
-        annoncer(`${action === "ok" ? "✅ Publié" : "❌ Refusé"} : ${abreger(p.titre, 45)}`, actionAnnuler(c.code));
-        // La carte s'envole du côté de la décision, puis la suivante apparaît.
-        if (sansMouvement()) {
-          dessiner();
-          return;
-        }
-        grande.classList.add(action === "ok" ? "envol-ok" : "envol-no");
-        setTimeout(dessiner, 340);
-      },
-      echec: () => grande.classList.remove("envol-ok", "envol-no"), // l'envoi a échoué : la carte revient
-    }));
-    if (!decisionsDisponibles) {
+    const passer = () => {
+      const deja = reportesConcours.indexOf(c.code);
+      if (deja >= 0) reportesConcours.splice(deja, 1);
+      reportesConcours.push(c.code);
+      dessiner();
+    };
+    if (decisionsDisponibles) {
+      const boutons = el("div", "cc-boutons cc-boutons-grands");
+      boutons.append(
+        bouton("❌ Refuser", "bouton-grand bouton-refuser", () => trancher("no")),
+        bouton("✅ Publier", "bouton-grand bouton-publier", () => trancher("ok")),
+      );
+      noeuds.push(boutons);
+      installerGlisse(grande, (sens) => zone.querySelector(sens === "ok" ? ".bouton-publier" : ".bouton-refuser"));
+    } else {
       noeuds.push(el("p", "discret", EN_LIGNE
         ? "Pour décider ici, enregistre une clé GitHub (section plus bas) ; sinon réponds dans Telegram."
         : "Lecture seule : les boutons n'existent que sur le tableau privé."));
     }
-    if (pile.length > 1) {
-      noeuds.push(bouton("Passer pour plus tard", "bouton-secondaire pile-passer", () => {
-        const deja = reportesConcours.indexOf(c.code);
-        if (deja >= 0) reportesConcours.splice(deja, 1);
-        reportesConcours.push(c.code);
-        dessiner();
-      }));
-    }
-    if (EN_LIGNE && decisionsDisponibles) {
+    if (pile.length > 1) noeuds.push(bouton("Passer pour plus tard", "bouton-secondaire pile-passer", passer));
+    if (decisionsDisponibles) {
+      noeuds.push(el("p", "discret pile-astuce", "Clavier : ← refuser · → publier · ↓ passer"));
       const groupes = groupesDeRefus(toute, maintenant);
       if (groupes.length > 0) {
-        noeuds.push(panneauLot ? panneauDeLots(groupes) : bouton("Refuser en lot…", "bouton-secondaire pile-lot", () => {
+        const titres = new Map(toute.map((x) => [x.code, presenterConcours(x, maintenant).titre]));
+        noeuds.push(panneauLot ? panneauDeLots(groupes, titres) : bouton("Refuser en lot…", "bouton-secondaire pile-lot", () => {
           panneauLot = true;
           dessiner();
         }));
       }
     }
     zone.replaceChildren(...noeuds);
+    raccourcisPile = {
+      visible: () => zone.isConnected && !zone.closest("[hidden]"),
+      ok: () => trancher("ok"),
+      no: () => trancher("no"),
+      passer: pile.length > 1 ? passer : null,
+    };
   }
 
   dessiner();
@@ -1284,9 +1330,13 @@ function carteConcours(projet, maintenant) {
   stats.append(grosseTuile({ ton: "accent", valeur: formaterNombre(compteurs.publies_7j), libelle: "publiés cette semaine", detail: `${formaterNombre(compteurs.publies)} au total` }, "📣"));
   carte.append(stats);
 
-  const enAttente = cartes.filter((c) => c.approuve === true || c.ordre === "ok" || c.ordre === "no" || ordresEnvoyes.has(c.code));
+  const enEnvoi = codesEnEnvoi();
+  const enAttente = cartes.filter((c) => c.approuve === true || c.ordre === "ok" || c.ordre === "no" || ordresEnvoyes.has(c.code) || enEnvoi.has(c.code));
   if (enAttente.length > 0) {
     plus.push(sectionFp(`Décidés, en attente du bot (${enAttente.length})`, false, listeFp(enAttente.map((c) => {
+      if (!ordresEnvoyes.has(c.code) && enEnvoi.has(c.code) && c.ordre !== "ok" && c.ordre !== "no") {
+        return ligneFp(presenterConcours(c, maintenant).titre, `${libelleOrdre(actionEnEnvoi(c.code)) ?? "Décidé"} · envoi en cours`);
+      }
       const ordre = c.ordre === "ok" || c.ordre === "no" ? c.ordre : ordresEnvoyes.get(c.code);
       const reprendre = EN_LIGNE && numerosOrdres.has(c.code)
         ? groupeDeLiens("fp-liens", bouton("Reprendre", "bouton-secondaire", async () => {
@@ -2536,6 +2586,7 @@ async function chargerUneFois(force = false) {
   decisionsDisponibles = EN_LIGNE ? Boolean(lireJetonGithub()) : (await lireEtatDecisions()) !== null;
   if (EN_LIGNE && decisionsDisponibles) await Promise.all([lireOrdresEnAttenteGithub(), lireProspection()]);
   etatRevenus = EN_LIGNE ? ((chargeEnLigne && chargeEnLigne.revenus) || null) : await lireEtatRevenus();
+  planifierEnvoi(); // reprend les décisions gardées dans le téléphone (page fermée avant la fin de l'envoi)
   // Rafraîchissement automatique : si rien n'a changé, la page reste exactement comme elle est (pas de clignotement, on garde sa place).
   const empreinte = empreinteDuRendu([
     paquet, etatRevenus, decisionsDisponibles, listeProspection, historiqueOrdres, dernierResultat, [...ordresEnvoyes], [...numerosOrdres],
