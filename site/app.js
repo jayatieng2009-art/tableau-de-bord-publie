@@ -13,6 +13,7 @@ import {
   doitRedessiner, empreinteDuRendu, directionGlisse, decisionDeGlisse, GLISSE_APERCU_PX, entierAnimable, valeurAnimee,
   zoneSousCourbe, dernierPoint, salutation, phraseAccueil, traitsIcone,
   fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
+  comptesTiktokDeLOnglet, rappelsDuCompte, rappelsGenerauxTiktok, videosDuCompte, groupesTelegramDe,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -1304,7 +1305,7 @@ function carteConcours(projet, maintenant) {
 
   // Les vidéos de demain dans le groupe Telegram : une ligne d'état (les problèmes sont dits plus bas, avec les alertes) et un appui pour ouvrir chaque groupe.
   const videosDeDemain = ligneVideosDeDemain(d.videos_du_jour);
-  const groupes = liste(d.groupes).map((g) => lien(`📹 ${titreSur(g.nom)}`, lienPlateforme(g.lien), "lien lien-principal")).filter(Boolean);
+  const groupes = liensDesGroupes(groupesTelegramDe([projet], "concours"));
   if (videosDeDemain) carte.append(el("p", videosDeDemain.ton === "ok" ? "texte-ok" : "discret", `${videosDeDemain.ton === "ok" ? "✅" : "⏳"} ${videosDeDemain.texte}`));
   if (groupes.length > 0) carte.append(groupeDeLiens("fp-acces", ...groupes));
 
@@ -1612,82 +1613,103 @@ function carteGumroad(projet) {
   return carte;
 }
 
-function carteTiktok(projet, maintenant) {
-  const d = objet(projet.details);
-  const exports = objet(d.exports);
-  const publiques = objet(d.videos_publiques);
-  const comptes = liste(d.comptes);
-  const carte = el("article", "carte carte-large");
-  carte.append(enteteDeCarte(projet, "Analytiques TikTok", comptes.length > 0 ? el("span", "badge-ok", `${comptes.length} compte(s)`) : el("span", "badge-attention", "À configurer")));
-  const alertes = alertesUtiles(liste(d.a_faire));
-  if (alertes.length > 0) carte.append(blocAlertes(alertes));
-  const plus = []; // tout ce qui n'est pas l'essentiel : repliés dans « Plus de détails »
-  for (const c of comptes) {
-    carte.append(el("p", "cmd-titre", `@${String(c.compte)}${typeof c.nom === "string" ? ` (${c.nom})` : ""}`));
-    const v = variation(c.abonnes, Number.isFinite(c.variation) ? c.abonnes - c.variation : null);
-    const depuis = typeof c.variation_depuis === "string" ? `${c.variation_depuis.slice(8, 10)}/${c.variation_depuis.slice(5, 7)}` : "?";
-    const suivies = objet(objet(publiques.par_compte)[c.compte]);
-    const tuiles = el("div", "grosses-tuiles");
-    tuiles.append(
-      grosseTuile({ ton: "success", valeur: formaterNombre(c.abonnes), libelle: "abonnés", detail: v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}` }, "👥"),
-      grosseTuile({ ton: "accent", valeur: formaterNombre(c.vues_total), libelle: "vues", detail: Number.isFinite(suivies.suivies) ? `${suivies.lues ?? 0} vidéo(s) lue(s) sur ${suivies.suivies}` : "" }, "👀"),
-    );
-    carte.append(tuiles, el("p", "discret", `${formaterNombre(c.jaime)} j'aime · ${formaterNombre(c.videos)} vidéos`));
-    const courbesCompte = [];
-    if (liste(c.courbe).length >= 2) courbesCompte.push(blocCourbe(`Abonnés @${String(c.compte)}`, liste(c.courbe), "valeur"));
-    if (liste(c.courbe_vues).length >= 2) courbesCompte.push(blocCourbe(`Vues @${String(c.compte)}`, liste(c.courbe_vues), "valeur"));
-    if (courbesCompte.length > 0) plus.push(sectionFp(`Évolution @${String(c.compte)}`, false, ...courbesCompte));
-  }
-  const ligneVideoTiktok = (v) => ligneFp(
+// ---------- TikTok : chaque compte dans le projet auquel il appartient (plus d'onglet à part) ----------
+
+function ligneVideoTiktok(v, maintenant) {
+  return ligneFp(
     abreger(v.titre, 90),
     [`@${String(v.compte)}`, compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
       compter(v.partages, "partage", "partages"), typeof v.publie_le === "string" ? `publiée ${ageLisible(v.publie_le, maintenant)}` : null]
       .filter((x) => typeof x === "string" && x !== "?" && x !== "@undefined").join(" · "),
     groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
   );
-  const ligneExport = (v) => ligneFp(
+}
+
+function ligneExportTiktok(v) {
+  return ligneFp(
     abreger(v.titre, 90),
     [compter(v.vues, "vue", "vues"), compter(v.likes, "like", "likes"), compter(v.commentaires, "commentaire", "commentaires"),
       compter(v.partages, "partage", "partages"), typeof v.date === "string" ? v.date : null].filter((x) => typeof x === "string" && x !== "?").join(" · "),
     groupeDeLiens("fp-liens", lien("Voir", lienTiktok(v.lien))),
   );
-  // Le palmarès : les 3 premières vidéos en vue, les suivantes dans une section repliée.
-  const palmares = (titre, videos, ligneDe, vide, introduction) => {
-    const reste = videos.length > 3 ? [sectionFp(`Voir les ${videos.length - 3} autres`, false, listeFp(videos.slice(3).map(ligneDe), ""))] : [];
-    return sectionFp(`${titre} (${videos.length})`, true, ...(introduction ? [introduction] : []), listeFp(videos.slice(0, 3).map(ligneDe), vide), ...reste);
-  };
-  if (Number(publiques.suivies) > 0) {
-    const lues = Number(publiques.lues);
-    carte.append(palmares("Vidéos les plus vues", liste(publiques.liste), ligneVideoTiktok,
-      lues === 0 ? "Première lecture en cours : revenez dans une minute." : "Aucune vidéo lisible."));
-    plus.push(el("p", "discret", `Lecture publique, sans connexion : ${lues} vidéo(s) lue(s) sur ${publiques.suivies} suivies`
-      + `${typeof publiques.maj === "string" ? `, dernière lecture ${ageLisible(publiques.maj, maintenant)}` : ""}. Chaque vidéo est relue toutes les 6 heures.`));
-  }
-  if (Number(exports.nb_videos) > 0) {
-    const tuiles = el("div", "grosses-tuiles");
-    tuiles.append(
-      grosseTuile({ ton: "accent", valeur: formaterNombre(exports.total_vues), libelle: "vues (exports)", detail: `${formaterNombre(exports.nb_videos)} vidéos suivies` }, "👀"),
-    );
-    carte.append(tuiles, palmares("Vidéos les plus vues (exports)", liste(exports.videos), ligneExport, "Aucune vidéo dans les exports."));
-  }
-  const serieExport = liste(exports.serie_jours).filter((p) => typeof p.date === "string" && Number.isFinite(p.vues));
-  if (serieExport.length >= 2) {
-    plus.push(sectionFp(
-      `Vues par jour, export de TikTok Studio (${serieExport.length} jours)`, false,
-      blocCourbe("Vues par jour", serieExport.map((p) => ({ date: p.date, valeur: p.vues })), "valeur"),
-      el("p", "discret", `${formaterNombre(exports.total_vues_jours)} vues sur la période.`),
-    ));
-  }
-  plus.push(
-    groupeDeLiens(
-      "fp-acces",
-      lien("TikTok Studio : analyses", "https://www.tiktok.com/tiktokstudio/analytics", "lien lien-principal"),
-      lien("TikTok Studio : contenu", "https://www.tiktok.com/tiktokstudio/content"),
-    ),
-    el("p", "discret", "Les chiffres viennent des pages publiques TikTok (sans connexion) ; les analyses privées (audience, temps de visionnage) exigent un export CSV de TikTok Studio. Pour suivre une nouvelle vidéo, ajoute son adresse dans videos.txt."),
+}
+
+// Le palmarès : les 3 premières vidéos en vue, les suivantes dans une section repliée.
+function palmaresTiktok(titre, videos, ligneDe, vide) {
+  const reste = videos.length > 3 ? [sectionFp(`Voir les ${videos.length - 3} autres`, false, listeFp(videos.slice(3).map(ligneDe), ""))] : [];
+  return sectionFp(`${titre} (${videos.length})`, true, listeFp(videos.slice(0, 3).map(ligneDe), vide), ...reste);
+}
+
+// Un compte TikTok, dans l'onglet de son projet : deux gros chiffres et ce qu'il y a à faire, rien d'autre en vue ; le reste est sous « Voir plus ».
+// `general` : le premier bloc de la page porte aussi ce qui ne parle d'aucun compte (exports de TikTok Studio, rappel d'export, liens).
+function blocTiktok(projet, compte, general, maintenant) {
+  const d = objet(projet.details);
+  const exports = objet(d.exports);
+  const publiques = objet(d.videos_publiques);
+  const nom = String(compte.compte);
+  const carte = el("article", "carte carte-large carte-tiktok");
+  const icone = el("span", "titre-icone");
+  icone.append(iconeSvg("tiktok"));
+  const entete = el("div", "fp-entete");
+  entete.append(icone, el("h3", "", `TikTok @${nom}`));
+  carte.append(entete);
+
+  const v = variation(compte.abonnes, Number.isFinite(compte.variation) ? compte.abonnes - compte.variation : null);
+  const depuis = typeof compte.variation_depuis === "string" ? `${compte.variation_depuis.slice(8, 10)}/${compte.variation_depuis.slice(5, 7)}` : "?";
+  const tuiles = el("div", "grosses-tuiles");
+  tuiles.append(
+    grosseTuile({ ton: "success", valeur: formaterNombre(compte.abonnes), libelle: "abonnés", detail: v.sens === "inconnu" ? "" : `${v.texte} depuis le ${depuis}` }, "👥"),
+    grosseTuile({ ton: "accent", valeur: formaterNombre(compte.vues_total), libelle: "vues" }, "👀"),
   );
-  carte.append(sectionFp("Plus de détails", false, ...plus));
+  carte.append(tuiles);
+
+  const rappels = [...rappelsDuCompte(d.a_faire, nom), ...(general ? rappelsGenerauxTiktok(d.a_faire) : [])].slice(0, 2);
+  for (const r of rappels) carte.append(el("p", `alerte alerte-${r.niveau}`, abreger(r.texte, 80)));
+
+  const plus = [];
+  plus.push(el("p", "discret", `${formaterNombre(compte.jaime)} j'aime · ${formaterNombre(compte.videos)} vidéos`));
+  const courbes = [];
+  if (liste(compte.courbe).length >= 2) courbes.push(blocCourbe("Abonnés", liste(compte.courbe), "valeur"));
+  if (liste(compte.courbe_vues).length >= 2) courbes.push(blocCourbe("Vues", liste(compte.courbe_vues), "valeur"));
+  if (courbes.length > 0) plus.push(sectionFp("Évolution", false, ...courbes));
+  if (Number(publiques.suivies) > 0) {
+    plus.push(palmaresTiktok("Vidéos les plus vues", videosDuCompte(publiques.liste, nom), (x) => ligneVideoTiktok(x, maintenant),
+      Number(publiques.lues) === 0 ? "Première lecture en cours : revenez dans une minute." : "Aucune vidéo lisible."));
+  }
+  if (general) {
+    if (Number(publiques.suivies) > 0) {
+      plus.push(el("p", "discret", `Lecture publique, sans connexion : ${publiques.lues ?? 0} vidéo(s) lue(s) sur ${publiques.suivies} suivies`
+        + `${typeof publiques.maj === "string" ? `, dernière lecture ${ageLisible(publiques.maj, maintenant)}` : ""}. Chaque vidéo est relue toutes les 6 heures.`));
+    }
+    if (Number(exports.nb_videos) > 0) {
+      const tuilesExport = el("div", "grosses-tuiles");
+      tuilesExport.append(grosseTuile({ ton: "accent", valeur: formaterNombre(exports.total_vues), libelle: "vues (exports)", detail: `${formaterNombre(exports.nb_videos)} vidéos suivies` }, "👀"));
+      plus.push(tuilesExport, palmaresTiktok("Vidéos les plus vues (exports)", liste(exports.videos), ligneExportTiktok, "Aucune vidéo dans les exports."));
+    }
+    const serieExport = liste(exports.serie_jours).filter((p) => typeof p.date === "string" && Number.isFinite(p.vues));
+    if (serieExport.length >= 2) {
+      plus.push(sectionFp(
+        `Vues par jour, export de TikTok Studio (${serieExport.length} jours)`, false,
+        blocCourbe("Vues par jour", serieExport.map((p) => ({ date: p.date, valeur: p.vues })), "valeur"),
+        el("p", "discret", `${formaterNombre(exports.total_vues_jours)} vues sur la période.`),
+      ));
+    }
+    plus.push(
+      groupeDeLiens(
+        "fp-acces",
+        lien("TikTok Studio : analyses", "https://www.tiktok.com/tiktokstudio/analytics", "lien lien-principal"),
+        lien("TikTok Studio : contenu", "https://www.tiktok.com/tiktokstudio/content"),
+      ),
+      el("p", "discret", "Les chiffres viennent des pages publiques TikTok (sans connexion) ; les analyses privées (audience, temps de visionnage) exigent un export CSV de TikTok Studio. Pour suivre une nouvelle vidéo, ajoute son adresse dans videos.txt."),
+    );
+  }
+  carte.append(sectionFp("Voir plus", false, ...plus));
   return carte;
+}
+
+// Les boutons « 📹 groupe Telegram » d'un onglet : chaque groupe est dans l'onglet de son projet (voir groupesTelegramDe).
+function liensDesGroupes(groupes) {
+  return groupes.map((g) => lien(`📹 ${titreSur(g.nom)}`, lienPlateforme(g.lien), "lien lien-principal")).filter(Boolean);
 }
 
 function sectionEntreesRevenus(etat) {
@@ -1825,11 +1847,13 @@ function blocVentes(ventes, maintenant) {
   return bloc;
 }
 
-function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
+function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant, groupesTelegram = []) {
   const carte = el("article", "carte carte-large");
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", "Boutique"), bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   carte.append(entete);
+  const liensGroupes = liensDesGroupes(groupesTelegram);
+  if (liensGroupes.length > 0) carte.append(groupeDeLiens("fp-acces", ...liensGroupes));
 
   const g = objet(gumroad && gumroad.details);
   const catalogue = liste(g.boutique ? objet(g.boutique).produits : []);
@@ -2239,7 +2263,6 @@ function carteDuProjet(projet, maintenant) {
   if (projet.adaptateur === "bot-concours" && projet.statut === "ok") return carteSure(projet, maintenant, carteConcours);
   if (projet.adaptateur === "produits-numeriques" && projet.statut === "ok") return carteSure(projet, maintenant, carteProduits);
   if (projet.adaptateur === "gumroad" && projet.statut === "ok") return carteSure(projet, maintenant, carteGumroad);
-  if (projet.adaptateur === "tiktok" && projet.statut === "ok") return carteSure(projet, maintenant, carteTiktok);
   if (projet.adaptateur === "falling-pickaxe" && projet.statut === "ok") {
     try {
       return carteFallingPickaxe(projet, maintenant);
@@ -2359,8 +2382,27 @@ function afficher(paquet) {
       revenus = null;
     }
   }
-  const onglets = rangerEnOnglets(projets, revenus ? ["boutique"] : []).filter((o) => o.id !== "resume" || vue);
+  const extras = revenus || comptesTiktokDeLOnglet(projets, "boutique").length > 0 ? ["boutique"] : []; // la boutique existe aussi pour son compte TikTok
+  const onglets = rangerEnOnglets(projets, extras).filter((o) => o.id !== "resume" || vue);
   const panneaux = new Map();
+  let generalPorte = false; // le premier bloc TikTok de la page porte aussi ce qui ne parle d'aucun compte
+  const blocsTiktok = (onglet) => {
+    const noeuds = [];
+    for (const projet of projets.filter((p) => p && p.adaptateur === "tiktok" && p.statut === "ok")) {
+      for (const compte of comptesTiktokDeLOnglet([projet], onglet)) {
+        const general = !generalPorte;
+        generalPorte = true;
+        try {
+          noeuds.push(blocTiktok(projet, compte, general, maintenant));
+        } catch {
+          const erreur = el("article", "carte carte-large");
+          erreur.append(el("h3", "", `TikTok @${String(compte.compte)}`), el("p", "alerte alerte-erreur", "Données illisibles pour ce compte."));
+          noeuds.push(erreur);
+        }
+      }
+    }
+    return noeuds;
+  };
   for (const o of onglets) {
     const panneau = el("section", "panneau");
     panneau.id = `panneau-${o.id}`;
@@ -2374,13 +2416,14 @@ function afficher(paquet) {
       const gumroad = o.projets.find((p) => p.adaptateur === "gumroad" && p.statut === "ok") ?? null;
       if (produits || gumroad || revenus) {
         try {
-          cartes.append(carteBoutique(produits, gumroad, etatRevenus, revenus, maintenant));
+          cartes.append(carteBoutique(produits, gumroad, etatRevenus, revenus, maintenant, groupesTelegramDe(projets, "boutique")));
         } catch {
           const erreur = el("article", "carte carte-large");
           erreur.append(el("h3", "", "Boutique"), el("p", "alerte alerte-erreur", "Données illisibles pour la boutique."));
           cartes.append(erreur);
         }
       }
+      cartes.append(...blocsTiktok("boutique"));
       let prospection = null;
       try {
         prospection = carteProspection(maintenant);
@@ -2394,7 +2437,11 @@ function afficher(paquet) {
       }
       for (const projet of o.projets) if (projet !== produits && projet !== gumroad) cartes.append(carteDuProjet(projet, maintenant));
     } else {
-      for (const projet of o.projets) cartes.append(carteDuProjet(projet, maintenant));
+      for (const projet of o.projets) {
+        if (projet.adaptateur === "tiktok" && projet.statut === "ok") continue; // ses comptes ont chacun leur bloc, dans l'onglet de leur projet
+        cartes.append(carteDuProjet(projet, maintenant));
+      }
+      if (o.id === "concours") cartes.append(...blocsTiktok("concours"));
     }
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);

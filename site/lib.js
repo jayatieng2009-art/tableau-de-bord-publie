@@ -403,6 +403,9 @@ const TEXTES_GUMROAD = {
   erreur: ["avertissement", "ne répond pas."],
 };
 
+// Les projets qui ont un bloc TikTok et des liens Telegram ; un compte ou un groupe sans projet connu va dans le premier.
+const PROJETS_DES_BLOCS = ["concours", "boutique"];
+
 const NOM_COURT = { "bot-concours": "Concours", "produits-numeriques": "Produits", tiktok: "TikTok", gumroad: "Gumroad", "falling-pickaxe": "Live" };
 
 // Les tâches de tous les projets, avec le nom court du projet à part ; pas encore triées.
@@ -413,7 +416,9 @@ function tachesAvecSource(projets) {
     if (!p || typeof p !== "object") continue;
     const nom = Object.hasOwn(NOM_COURT, p.adaptateur) ? NOM_COURT[p.adaptateur] : typeof p.nom === "string" ? p.nom : "Projet";
     const d = objetSur(p.details);
-    for (const a of listeSure(d.a_faire)) taches.push({ nom, niveau: a.niveau, texte: typeof a.texte === "string" ? a.texte : "" });
+    for (const a of listeSure(d.a_faire)) {
+      taches.push({ nom, niveau: a.niveau, texte: typeof a.texte === "string" ? a.texte : "", onglet: PROJETS_DES_BLOCS.includes(a.projet) ? a.projet : null });
+    }
     if (p.adaptateur === "gumroad" && Object.hasOwn(TEXTES_GUMROAD, d.etat)) {
       const [niveau, texte] = TEXTES_GUMROAD[d.etat];
       taches.push({ nom, niveau, texte });
@@ -446,8 +451,8 @@ export function estRappelDeDecision(texte) {
   return typeof texte === "string" && /attend(?:ent)? ta décision/i.test(texte);
 }
 
-const ONGLET_DE_TACHE = { Concours: "concours", Produits: "boutique", Gumroad: "boutique", TikTok: "tiktok", Live: "live" };
-const NOM_DU_GROUPE = { concours: "Concours", boutique: "Boutique", tiktok: "TikTok", live: "Live" };
+const ONGLET_DE_TACHE = { Concours: "concours", Produits: "boutique", Gumroad: "boutique", TikTok: "concours", Live: "live" };
+const NOM_DU_GROUPE = { concours: "Concours", boutique: "Boutique", live: "Live" };
 const TACHE_COURTE_MAX = 70;
 
 // Les tâches à faire ou à surveiller, une ligne par thème (nombre + la plus grave) : l'accueil n'affiche pas vingt phrases.
@@ -455,12 +460,12 @@ const TACHE_COURTE_MAX = 70;
 export function groupesDeTaches(projets) {
   const triees = tachesAvecSource(projets)
     .filter((t) => typeof t.texte === "string" && t.texte.trim() && !estRappelDeDecision(t.texte))
-    .map((t) => ({ nom: t.nom, niveau: Object.hasOwn(RANG_ALERTE, t.niveau) ? t.niveau : "info", texte: t.texte.trim() }))
+    .map((t) => ({ nom: t.nom, niveau: Object.hasOwn(RANG_ALERTE, t.niveau) ? t.niveau : "info", texte: t.texte.trim(), onglet: t.onglet }))
     .filter((t) => t.niveau !== "info")
     .sort((a, b) => RANG_ALERTE[a.niveau] - RANG_ALERTE[b.niveau]);
   const groupes = new Map();
   for (const t of triees) {
-    const cible = Object.hasOwn(ONGLET_DE_TACHE, t.nom) ? ONGLET_DE_TACHE[t.nom] : null;
+    const cible = t.onglet ?? (Object.hasOwn(ONGLET_DE_TACHE, t.nom) ? ONGLET_DE_TACHE[t.nom] : null); // une tâche TikTok suit le projet de son compte
     const cle = cible ?? t.nom;
     const existant = groupes.get(cle);
     if (existant) {
@@ -503,7 +508,7 @@ export function tuilesAccueil(projets, revenus) {
   if (reseaux.length > 0) {
     tuiles.push({
       id: "abonnes", ton: "success", valeur: formaterNombre(reseaux.reduce((somme, [, n]) => somme + n, 0)), libelle: "abonnés, tous réseaux",
-      detail: reseaux.map(([nom, n]) => `${nom} ${formaterNombre(n)}`).join(" · "), cible: "tiktok",
+      detail: reseaux.map(([nom, n]) => `${nom} ${formaterNombre(n)}`).join(" · "), cible: "concours",
     });
   }
 
@@ -558,11 +563,10 @@ export const ONGLETS = [
   { id: "resume", titre: "Accueil" },
   { id: "concours", titre: "Concours" },
   { id: "boutique", titre: "Boutique" },
-  { id: "tiktok", titre: "TikTok" },
   { id: "live", titre: "Live" },
   { id: "autres", titre: "Autres" },
 ];
-const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "boutique", gumroad: "boutique", tiktok: "tiktok", "falling-pickaxe": "live" };
+const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "boutique", gumroad: "boutique", tiktok: "concours", "falling-pickaxe": "live" };
 
 // Les projets rangés par onglet, dans l'ordre fixe de ONGLETS ; un onglet sans projet n'existe pas, sauf « Accueil » et ceux
 // demandés en plus (ex. « boutique » pour le carnet de revenus, qui n'est pas un projet).
@@ -595,7 +599,6 @@ export function pastilleOnglet(id, projets) {
   }
   if (id === "boutique") return de("gumroad").some((d) => d.etat !== "ok") ? { texte: "!", niveau: "attention" } : null; // plus de pastille pour les vidéos en retard
   if (id === "live") return de("falling-pickaxe").some((d) => objetSur(d.live).en_cours === true) ? { texte: "●", niveau: "ok" } : null;
-  if (id === "tiktok") return de("tiktok").some((d) => listeSure(d.comptes).length === 0) ? { texte: "!", niveau: "attention" } : null;
   return null;
 }
 
@@ -1280,4 +1283,56 @@ export function toucheDeTri(touche) {
   const t = touche && typeof touche === "object" ? touche : {};
   if (t.dansUnChamp || t.ctrlKey || t.metaKey || t.altKey) return null;
   return typeof t.key === "string" && Object.hasOwn(TOUCHES_DE_TRI, t.key) ? TOUCHES_DE_TRI[t.key] : null;
+}
+
+// ---------- TikTok et Telegram rangés par projet : Concours Gratuits FR d'un côté, la boutique de l'autre ----------
+
+// L'onglet d'un compte TikTok : celui que dit le relevé (« boutique »), sinon Concours.
+export function projetDuCompte(compte) {
+  return objetSur(compte).projet === "boutique" ? "boutique" : "concours";
+}
+
+// Les comptes TikTok à montrer dans un onglet (« concours » ou « boutique »), dans l'ordre du relevé. Rien pour un projet en erreur.
+export function comptesTiktokDeLOnglet(projets, onglet) {
+  if (!PROJETS_DES_BLOCS.includes(onglet) || !Array.isArray(projets)) return [];
+  return projets
+    .filter((p) => p && typeof p === "object" && p.adaptateur === "tiktok" && p.statut === "ok")
+    .flatMap((p) => listeSure(objetSur(p.details).comptes))
+    .filter((c) => projetDuCompte(c) === onglet);
+}
+
+const RAPPELS_UTILES = ["erreur", "avertissement", "action"]; // les infos ne sont pas montrées : ce serait du bruit
+
+function rappelsTries(liste) {
+  return trierAlertes(listeSure(liste).filter((a) => RAPPELS_UTILES.includes(a.niveau) && typeof a.texte === "string" && a.texte.trim() !== ""))
+    .map(({ niveau, texte }) => ({ niveau, texte }));
+}
+
+const avecMajuscule = (texte) => (texte === "" ? texte : texte[0].toUpperCase() + texte.slice(1));
+
+// Ce qu'il y a à faire pour un compte, sans répéter « @compte : » (le bloc dit déjà de quel compte il parle), le plus grave d'abord.
+export function rappelsDuCompte(aFaire, compte) {
+  const prefixe = `@${compte} : `;
+  return rappelsTries(listeSure(aFaire).filter((a) => a.compte === compte))
+    .map(({ niveau, texte }) => ({ niveau, texte: avecMajuscule(texte.startsWith(prefixe) ? texte.slice(prefixe.length) : texte) }));
+}
+
+// Les rappels TikTok qui ne parlent d'aucun compte en particulier (exporter les analyses…).
+export function rappelsGenerauxTiktok(aFaire) {
+  return rappelsTries(listeSure(aFaire).filter((a) => typeof a.compte !== "string"))
+    .map(({ niveau, texte }) => ({ niveau, texte: avecMajuscule(texte.replace(/^TikTok : /, "")) })); // le bloc dit déjà « TikTok »
+}
+
+export function videosDuCompte(videos, compte) {
+  return listeSure(videos).filter((v) => v.compte === compte);
+}
+
+// Les groupes Telegram à ouvrir depuis un onglet : chacun dans l'onglet de son projet (« projet » du relevé), sinon Concours.
+export function groupesTelegramDe(projets, onglet) {
+  if (!PROJETS_DES_BLOCS.includes(onglet) || !Array.isArray(projets)) return [];
+  return projets
+    .filter((p) => p && typeof p === "object" && p.adaptateur === "bot-concours" && p.statut === "ok")
+    .flatMap((p) => listeSure(objetSur(p.details).groupes))
+    .filter((g) => typeof g.nom === "string" && g.nom !== "" && typeof g.lien === "string" && g.lien !== "")
+    .filter((g) => (g.projet === "boutique" ? "boutique" : "concours") === onglet);
 }

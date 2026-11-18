@@ -400,3 +400,10 @@ body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2
 .badge-envoi[hidden] { display: none; }
 .pile-astuce { display: none; margin-top: 8px; font-size: 0.8125rem; text-align: center; }
 @media (hover: hover) and (pointer: fine) { .pile-astuce { display: block; } }
+
+/* ---------- TikTok : un bloc par compte, dans l'onglet de son projet ---------- */
+.titre-icone { display: inline-flex; color: var(--accent); }
+.titre-icone svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.carte-tiktok .fp-entete { margin-bottom: 4px; }
+.carte-tiktok .grosses-tuiles { margin: 10px 0 8px; }
+.carte-tiktok .alerte { margin-bottom: 6px; }
