@@ -1218,8 +1218,6 @@ function carteProduits(projet, maintenant) {
 
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", String(projet.nom ?? "Produits numériques")));
-  const retard = Number(compteurs.en_retard);
-  entete.append(retard > 0 ? el("span", "badge-attention", `${retard} vidéo(s) en retard`) : el("span", "badge-ok", "Planning à jour"));
   entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
   carte.append(entete);
   carte.append(groupeDeLiens(
@@ -1235,7 +1233,6 @@ function carteProduits(projet, maintenant) {
   chiffres.append(
     tuileNombre("Produits à publier", compteurs.a_publier, `${formaterNombre(compteurs.deja_publies)} déjà publié(s)`),
     tuileTexte("Vidéos publiées", `${formaterNombre(compteurs.videos_faites)} / ${formaterNombre(compteurs.videos_prevues)}`),
-    tuileNombre("En retard", compteurs.en_retard),
     tuileTexte("Prochaine publication", prochaine && prochaine.quand ? delaiAvant(prochaine.quand, maintenant) : "aucune", prochaine && prochaine.quand ? rendezVous(prochaine) : ""),
     tuileNombre("Vidéos en réserve", compteurs.reserve),
   );
@@ -1246,11 +1243,10 @@ function carteProduits(projet, maintenant) {
     listeFp(entrees.slice(0, 30).map(ligneCalendrier), "Rien ici."),
     ...(entrees.length > 30 ? [el("p", "discret", `${entrees.length - 30} autre(s) non affichée(s).`)] : []),
   );
-  // Ce qui est à faire bientôt d'abord ; une longue liste de retards reste repliée (le nombre est déjà dans l'en-tête).
+  // Ce qui est à faire bientôt d'abord. Les vidéos en retard ne sont plus montrées (19/11/2026 : « enlève les vidéos en retard »).
   carte.append(
     groupe("Aujourd'hui", true, calendrier.aujourdhui),
     groupe("À venir", true, calendrier.aVenir),
-    groupe("En retard", calendrier.retard.length <= 5, calendrier.retard),
     groupe("Déjà fait", false, calendrier.faits),
     groupe("En réserve", false, calendrier.reserve),
   );
@@ -1624,10 +1620,9 @@ function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
     tuiles.append(grosseTuile({ ton: "success", valeur: formaterNombre(catalogue.length), libelle: "produits en ligne", detail: moyen === null ? "" : `prix moyen ${formaterMontant(moyen, "€")}` }, "🛍️"));
   }
   if (produits) {
-    const retard = Number(compteurs.en_retard);
     tuiles.append(
       grosseTuile({ ton: "accent", valeur: formaterNombre(calendrier.aujourdhui.length), libelle: "vidéos à poster aujourd'hui", detail: prochaine && prochaine.quand ? `prochaine ${delaiAvant(prochaine.quand, maintenant)}` : "" }, "🎬"),
-      grosseTuile({ ton: retard > 0 ? "warning" : "success", valeur: formaterNombre(Number.isFinite(retard) ? retard : null), libelle: "vidéos en retard", detail: `${formaterNombre(compteurs.videos_faites)} sur ${formaterNombre(compteurs.videos_prevues)} publiées` }, "⏰"),
+      grosseTuile({ ton: "success", valeur: `${formaterNombre(compteurs.videos_faites)} / ${formaterNombre(compteurs.videos_prevues)}`, libelle: "vidéos publiées" }, "✅"),
     );
   }
   if (tuiles.childElementCount > 0) carte.append(tuiles);

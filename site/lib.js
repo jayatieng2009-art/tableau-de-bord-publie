@@ -593,11 +593,7 @@ export function pastilleOnglet(id, projets) {
     }, 0);
     return n > 0 ? { texte: String(n), niveau: "info" } : null;
   }
-  if (id === "boutique") {
-    const n = de("produits-numeriques").reduce((somme, d) => somme + (estNombre(objetSur(d.compteurs).en_retard) ? Math.max(0, d.compteurs.en_retard) : 0), 0);
-    if (n > 0) return { texte: String(n), niveau: "attention" };
-    return de("gumroad").some((d) => d.etat !== "ok") ? { texte: "!", niveau: "attention" } : null;
-  }
+  if (id === "boutique") return de("gumroad").some((d) => d.etat !== "ok") ? { texte: "!", niveau: "attention" } : null; // plus de pastille pour les vidéos en retard
   if (id === "live") return de("falling-pickaxe").some((d) => objetSur(d.live).en_cours === true) ? { texte: "●", niveau: "ok" } : null;
   if (id === "tiktok") return de("tiktok").some((d) => listeSure(d.comptes).length === 0) ? { texte: "!", niveau: "attention" } : null;
   return null;
