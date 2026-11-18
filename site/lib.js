@@ -1112,3 +1112,120 @@ const MESSAGES_LISTE_PROSPECTION = {
 export function messageListeProspection(statut) {
   return Object.hasOwn(MESSAGES_LISTE_PROSPECTION, statut) ? MESSAGES_LISTE_PROSPECTION[statut] : "La liste de prospection est illisible pour le moment : réessaie dans un moment.";
 }
+
+// ---------- Confort : rafraîchir sans faire sauter la page, glisser un concours, chiffres qui comptent, accueil, icônes ----------
+
+export const DELAI_REDESSIN_MS = 10 * MINUTE;
+
+// Le rafraîchissement automatique ne redessine la page que si les données ont changé (ou si l'affichage a vieilli : les « il y a 5 min »
+// ne se mettent à jour qu'en redessinant) ; un rafraîchissement demandé à la main redessine toujours. Ne plante jamais.
+export function doitRedessiner(empreinteAvant, empreinteApres, dernierRenduMs, maintenantMs, force = false) {
+  if (force === true || typeof empreinteAvant !== "string" || typeof empreinteApres !== "string" || empreinteAvant !== empreinteApres) return true;
+  if (!estNombre(dernierRenduMs) || !estNombre(maintenantMs)) return true;
+  return maintenantMs - dernierRenduMs >= DELAI_REDESSIN_MS;
+}
+
+// Ce qui décide si la page doit changer : tout le relevé SAUF l'heure à laquelle il a été pris (elle change à chaque lecture, sans rien changer
+// à ce que l'on voit). Null si la valeur est illisible : on redessine alors, comme avant.
+export function empreinteDuRendu(valeur) {
+  try {
+    return JSON.stringify(valeur, (cle, v) => (cle === "genere_a" || cle === "releve_a" ? undefined : v));
+  } catch {
+    return null;
+  }
+}
+
+export const GLISSE_SEUIL_PX = 96; // glissement lent : il faut aller au moins jusque-là
+export const GLISSE_SEUIL_RAPIDE_PX = 48; // coup de doigt rapide : un geste plus court suffit
+export const GLISSE_APERCU_PX = 48; // à partir de là, la carte se teinte pour annoncer la décision
+const GLISSE_VITESSE_MIN = 0.6; // pixels par milliseconde
+
+// Vers où va le doigt : « ok » (droite = publier), « no » (gauche = refuser), ou null (trop court ou plutôt vertical : on fait défiler la page).
+export function directionGlisse(dx, dy, seuil) {
+  if (!Number.isFinite(dx) || !Number.isFinite(seuil)) return null;
+  const vertical = Number.isFinite(dy) ? Math.abs(dy) : 0;
+  if (Math.abs(dx) < seuil || Math.abs(dx) <= 1.5 * vertical) return null;
+  return dx > 0 ? "ok" : "no";
+}
+
+// La décision prise quand le doigt se relève : un long glissement, ou un coup de doigt rapide.
+export function decisionDeGlisse(dx, dy, dureeMs) {
+  const lent = directionGlisse(dx, dy, GLISSE_SEUIL_PX);
+  if (lent) return lent;
+  const duree = Number.isFinite(dureeMs) ? Math.max(dureeMs, 1) : Infinity;
+  if (!Number.isFinite(dx) || Math.abs(dx) / duree < GLISSE_VITESSE_MIN) return null;
+  return directionGlisse(dx, dy, GLISSE_SEUIL_RAPIDE_PX);
+}
+
+const ENTIER_AFFICHE = /^(?:\d{1,3}(?:[   ]\d{3})*|\d{1,7})$/;
+const ENTIER_ANIMABLE_MAX = 9_999_999;
+
+// « 1 234 » -> 1234 ; tout ce qui n'est pas un entier simple (« 3 / 5 », « 12 € », « +3 », « ? ») reste tel quel : null.
+export function entierAnimable(texte) {
+  if (typeof texte !== "string" || !ENTIER_AFFICHE.test(texte)) return null;
+  const n = Number(texte.replace(/[   ]/g, ""));
+  return n <= ENTIER_ANIMABLE_MAX ? n : null;
+}
+
+// La valeur affichée pendant que le chiffre « compte » : part de 0, ralentit, arrive exactement à `final`.
+export function valeurAnimee(final, progression) {
+  const t = Number.isFinite(progression) ? Math.min(1, Math.max(0, progression)) : 1;
+  return Math.round(final * (1 - (1 - t) ** 3));
+}
+
+function lirePoints(points) {
+  if (typeof points !== "string") return [];
+  return points.trim().split(/\s+/).map((t) => t.split(",")).filter((p) => p.length === 2 && p.every((s) => s !== "" && Number.isFinite(Number(s))));
+}
+
+// Les points de la courbe + le bas de l'image : de quoi colorer la zone sous la courbe.
+export function zoneSousCourbe(points, bas) {
+  const liste = lirePoints(points);
+  if (liste.length < 2 || !estNombre(bas)) return "";
+  return `${liste.map((p) => p.join(",")).join(" ")} ${liste[liste.length - 1][0]},${bas} ${liste[0][0]},${bas}`;
+}
+
+// Le dernier point de la courbe (celui que l'on marque d'un rond), ou null.
+export function dernierPoint(points) {
+  const liste = lirePoints(points);
+  if (liste.length === 0) return null;
+  const [x, y] = liste[liste.length - 1];
+  return { x: Number(x), y: Number(y) };
+}
+
+// Le bonjour de l'accueil, selon l'heure de Paris (0 à 23).
+export function salutation(heure) {
+  if (!Number.isInteger(heure) || heure < 0 || heure > 23) return "Bonjour";
+  if (heure >= 18 || heure < 5) return "Bonsoir";
+  return heure < 12 ? "Bonjour" : "Bon après-midi";
+}
+
+// La phrase du jour en haut de l'accueil et son ton : rouge s'il y a une panne, orange s'il y a des choses à faire, vert sinon.
+// Seules les bonnes nouvelles de la semaine sont dites (trois au plus) ; une baisse ou un zéro se voit dans le bilan, pas ici.
+export function phraseAccueil(groupes, bilan) {
+  const liste = Array.isArray(groupes) ? groupes.filter((g) => g && typeof g === "object") : [];
+  const b = objetSur(bilan);
+  const etat = liste.some((g) => g.niveau === "erreur") ? "erreur" : liste.length > 0 ? "attention" : "ok";
+  const parties = [liste.length > 0 ? `${liste.length} chose${liste.length > 1 ? "s" : ""} à faire` : "Rien à faire"];
+  const nouvelles = [];
+  const gainTelegram = objetSur(b.telegram).gain;
+  if (estNombre(gainTelegram) && gainTelegram > 0) nouvelles.push(`+${formaterNombre(gainTelegram)} abonnés Telegram`);
+  if (estNombre(b.tiktokAbonnes) && b.tiktokAbonnes > 0) nouvelles.push(`+${formaterNombre(b.tiktokAbonnes)} abonnés TikTok`);
+  const ventes = objetSur(b.ventes7j).nb;
+  if (estNombre(ventes) && ventes > 0) nouvelles.push(`${formaterNombre(ventes)} vente${ventes > 1 ? "s" : ""}`);
+  return { etat, texte: [...parties, ...nouvelles.slice(0, 3)].join(" · ") };
+}
+
+// Les icônes de la barre du bas : des traits (chemins SVG dans un carré de 24), dessinés par la page. Rubrique inconnue : le dossier.
+const ICONES_SVG = {
+  resume: ["M3.5 11.2 12 4l8.5 7.2", "M5.8 9.8V19.5h12.4V9.8", "M10 19.5v-5h4v5"],
+  concours: ["M4 11h16v9H4z", "M3 7.5h18V11H3z", "M12 7.5V20", "M12 7.5C10.5 4 7 4.2 7.2 6.2c.2 1.4 2.6 1.3 4.8 1.3", "M12 7.5C13.5 4 17 4.2 16.8 6.2c-.2 1.4-2.6 1.3-4.8 1.3"],
+  boutique: ["M5.5 8.5h13l-1 11.5h-11z", "M9 8.5V7a3 3 0 0 1 6 0v1.5"],
+  tiktok: ["M9.5 17.5V5.8l9.5-2v11.7", "M3.5 17.5a3 3 0 1 0 6 0 3 3 0 1 0-6 0", "M13 15.5a3 3 0 1 0 6 0 3 3 0 1 0-6 0"],
+  live: ["M12 10.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 1 0 0-3.6", "M8.2 8.2a5.4 5.4 0 0 0 0 7.6", "M15.8 8.2a5.4 5.4 0 0 1 0 7.6", "M5.4 5.4a9.4 9.4 0 0 0 0 13.2", "M18.6 5.4a9.4 9.4 0 0 1 0 13.2"],
+  autres: ["M3.5 7.8A1.8 1.8 0 0 1 5.3 6h4l2 2.4h7.4a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H5.3a1.8 1.8 0 0 1-1.8-1.8z"],
+};
+
+export function traitsIcone(id) {
+  return typeof id === "string" && Object.hasOwn(ICONES_SVG, id) ? ICONES_SVG[id] : ICONES_SVG.autres;
+}

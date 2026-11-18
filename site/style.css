@@ -1,61 +1,49 @@
+/* Thème unique : la nuit, tout le temps (pas de mode clair). */
 :root {
-  --fond: #f6f7f9;
-  --carte: #ffffff;
-  --texte: #1c2330;
-  --discret: #566074;
-  --bordure: #d8dde6;
-  --accent: #2457d6;
-  --accent-texte: #ffffff;
-  --ok-fond: #e3f4e8;
-  --ok-texte: #14532d;
-  --alerte-fond: #fdf0d5;
-  --alerte-texte: #6b4400;
-  --erreur-fond: #fde4e2;
-  --erreur-texte: #7a1a14;
-  --accent-fond: #e4ebfb;
-  --accent-fort: #1a3f9c;
-  --neutre-fond: #eceff4;
-  --neutre-texte: #3b4557;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --accent-fond: #1d2a4d;
-    --accent-fort: #aac2ff;
-    --neutre-fond: #262c38;
-    --neutre-texte: #c7cedb;
-    --fond: #12151b;
-    --carte: #1b2029;
-    --texte: #e8ebf1;
-    --discret: #a2abbb;
-    --bordure: #2e3542;
-    --accent: #7ea2ff;
-    --accent-texte: #0b1020;
-    --ok-fond: #163322;
-    --ok-texte: #9be0b3;
-    --alerte-fond: #3a2d0f;
-    --alerte-texte: #f2cf8a;
-    --erreur-fond: #3d1b19;
-    --erreur-texte: #f5b0aa;
-  }
+  color-scheme: dark;
+  --fond: #0b0e14;
+  --carte: #141a24;
+  --carte-haute: #1a2230;
+  --texte: #e9edf5;
+  --discret: #9aa5b8;
+  --bordure: #252e3d;
+  --accent: #7ea2ff;
+  --accent-texte: #0b1020;
+  --accent-fond: #1b2a4f;
+  --accent-fort: #b4c8ff;
+  --ok-fond: #12301f;
+  --ok-texte: #8fe0aa;
+  --alerte-fond: #3a2c0e;
+  --alerte-texte: #f3d08c;
+  --erreur-fond: #3e1a19;
+  --erreur-texte: #f7b3ad;
+  --neutre-fond: #212837;
+  --neutre-texte: #c9d1df;
+  --rayon: 18px;
+  --ombre: 0 1px 0 rgb(255 255 255 / 4%) inset, 0 10px 28px rgb(0 0 0 / 35%);
+  --elan: cubic-bezier(0.22, 1, 0.36, 1);
+  --chiffres: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background: var(--fond);
+  background: radial-gradient(900px 420px at 50% -80px, #16213a 0%, rgb(22 33 58 / 0%) 70%) no-repeat, var(--fond);
   color: var(--texte);
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
 }
 
 main {
+  overflow-x: clip; /* une carte glissée ou envolée ne fait jamais apparaître de barre de défilement horizontale */
   max-width: 960px;
   margin: 0 auto;
   padding: 16px 16px calc(96px + env(safe-area-inset-bottom)); /* de la place pour la barre du bas */
 }
 
-h1 { font-size: 1.5rem; margin: 0; }
+h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
 h2 { font-size: 1.15rem; margin: 0; }
 h3 { font-size: 1rem; margin: 0; overflow-wrap: anywhere; }
 
@@ -85,10 +73,11 @@ h3 { font-size: 1rem; margin: 0; overflow-wrap: anywhere; }
 
 .cartes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
 .carte {
-  background: var(--carte);
+  background: linear-gradient(180deg, var(--carte-haute), var(--carte));
   border: 1px solid var(--bordure);
-  border-radius: 12px;
-  padding: 12px 16px;
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  padding: 14px 16px;
   min-width: 0;
 }
 .carte > .statut { margin: 6px 0 8px; }
@@ -200,15 +189,19 @@ progress { width: 100%; height: 14px; accent-color: var(--accent); }
 .onglets {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); z-index: 20; width: min(100%, 960px);
   display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px;
-  padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); background: var(--carte); border-top: 1px solid var(--bordure);
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--bordure);
+  background: rgb(20 26 36 / 82%); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%);
+  border-radius: 20px 20px 0 0;
 }
 .onglet {
   position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   min-height: 56px; padding: 4px 2px; border: 0; border-radius: 14px; background: transparent; color: var(--discret);
   font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer;
 }
-.onglet-icone { font-size: 1.4rem; line-height: 1; }
+.onglet-icone { display: flex; line-height: 1; }
+.onglet-icone svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.25s var(--elan); }
 .onglet[aria-selected="true"] { background: var(--accent-fond); color: var(--accent-fort); }
+.onglet[aria-selected="true"] .onglet-icone svg { stroke-width: 2; transform: translateY(-1px) scale(1.1); }
 .pastille {
   position: absolute; top: 2px; left: calc(50% + 6px); min-width: 20px; padding: 0 5px; border-radius: 999px;
   font-size: 0.6875rem; font-weight: 700; text-align: center; line-height: 18px;
@@ -229,11 +222,13 @@ button.grosse-tuile { cursor: pointer; }
 .gt-valeur { font-size: 1.9rem; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
 .gt-libelle { font-size: 0.875rem; font-weight: 700; }
 .gt-detail { font-size: 0.75rem; font-weight: 500; overflow-wrap: anywhere; }
-.ton-accent { background: var(--accent-fond); color: var(--accent-fort); }
-.ton-success { background: var(--ok-fond); color: var(--ok-texte); }
-.ton-warning { background: var(--alerte-fond); color: var(--alerte-texte); }
-.ton-danger { background: var(--erreur-fond); color: var(--erreur-texte); }
-.ton-neutre { background: var(--neutre-fond); color: var(--neutre-texte); }
+.ton-accent { background: linear-gradient(150deg, #243a72, #17254a); color: var(--accent-fort); }
+.ton-success { background: linear-gradient(150deg, #17432b, #0f2a1b); color: var(--ok-texte); }
+.ton-warning { background: linear-gradient(150deg, #4c3a14, #30230a); color: var(--alerte-texte); }
+.ton-danger { background: linear-gradient(150deg, #55221f, #331513); color: var(--erreur-texte); }
+.ton-neutre { background: linear-gradient(150deg, #2b3446, #1d2433); color: var(--neutre-texte); }
+.grosse-tuile { box-shadow: 0 1px 0 rgb(255 255 255 / 6%) inset, 0 8px 20px rgb(0 0 0 / 28%); }
+.gt-valeur, .tuile-valeur, .pile-titre { font-family: var(--chiffres); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 
 /* ---------- Accueil : à faire en premier ---------- */
 .faire-ligne {
@@ -252,7 +247,10 @@ button.grosse-tuile { cursor: pointer; }
 .pile { margin: 12px 0; }
 .pile-entete { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .badge-compteur { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--accent-fond); color: var(--accent-fort); font-size: 0.8125rem; font-weight: 700; }
-.pile-carte { padding: 22px 16px; border-radius: 20px; background: var(--accent-fond); color: var(--accent-fort); text-align: center; }
+.pile-carte {
+  position: relative; padding: 24px 16px; border-radius: 24px; text-align: center; color: var(--accent-fort);
+  background: linear-gradient(160deg, #283f7c, #18264d); box-shadow: 0 1px 0 rgb(255 255 255 / 8%) inset, 0 14px 34px rgb(0 0 0 / 40%);
+}
 .pile-emoji { font-size: 3rem; line-height: 1.1; }
 .pile-titre { margin: 6px 0 4px; font-size: 1.35rem; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
 .pile-ligne { margin: 0; font-size: 0.9rem; font-weight: 600; }
@@ -313,3 +311,85 @@ a.produit-mini:hover { border-color: var(--accent); }
 .pr-message { margin: 6px 0; padding: 10px 12px; border-radius: 8px; background: var(--neutre-fond); color: var(--neutre-texte); white-space: pre-wrap; overflow-wrap: anywhere; }
 .pr-boutons { margin-top: 8px; }
 .pr-boutons a.bouton { display: inline-flex; align-items: center; text-decoration: none; }
+
+/* ---------- Chargement : des formes grises qui brillent, à la place du texte « Chargement… » ---------- */
+.squelette { display: grid; gap: 12px; margin-top: 4px; }
+.squelette-tuiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.squelette-bloc {
+  border-radius: 16px; background: linear-gradient(100deg, var(--carte) 30%, var(--carte-haute) 50%, var(--carte) 70%);
+  background-size: 220% 100%; animation: reflet 1.4s linear infinite;
+}
+.squelette-tuile { height: 96px; }
+.squelette-carte { height: 168px; }
+@keyframes reflet { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+#message:empty ~ .squelette, #message[data-type] ~ .squelette, #contenu:not([hidden]) ~ .squelette { display: none; }
+#message:not([data-type]):not(:empty) { color: var(--discret); font-size: 0.875rem; font-weight: 500; }
+
+/* ---------- Apparitions douces ---------- */
+@keyframes monte { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes entre-de-droite { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes apparait { from { opacity: 0; transform: translateY(14px) scale(0.96); } to { opacity: 1; transform: none; } }
+/* Seulement au premier affichage (la classe « entree » du <body> part ensuite) : un rafraîchissement ne rejoue rien. */
+body.entree .hero, body.entree .grosse-tuile, body.entree .accueil .carte, body.entree .cartes > .carte { animation: monte 0.55s var(--elan) backwards; }
+body.entree .grosse-tuile:nth-child(1) { animation-delay: 0.08s; }
+body.entree .grosse-tuile:nth-child(2) { animation-delay: 0.14s; }
+body.entree .grosse-tuile:nth-child(3) { animation-delay: 0.2s; }
+body.entree .grosse-tuile:nth-child(4) { animation-delay: 0.26s; }
+body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2s; }
+.panneau.entrant { animation: entre-de-droite 0.26s var(--elan) backwards; }
+
+/* Au toucher, ça s'enfonce un peu ; au survol et au relâchement, ça revient en douceur. */
+.bouton, .lien, .puce, .onglet, .grosse-tuile, .faire-ligne, .produit-mini {
+  transition: transform 0.14s var(--elan), background-color 0.2s, border-color 0.2s, color 0.2s, filter 0.2s;
+}
+.bouton:active, .lien:active, .puce:active, .onglet:active, button.grosse-tuile:active, .faire-ligne:active, a.produit-mini:active { transform: scale(0.96); }
+.bouton:not(:disabled):hover, .lien:hover { filter: brightness(1.12); }
+
+/* ---------- Accueil : la phrase du jour ---------- */
+.hero { margin: 0 0 14px; padding: 18px 18px 16px; border-radius: 22px; background: linear-gradient(150deg, #1f3b72, #12203f); box-shadow: 0 1px 0 rgb(255 255 255 / 7%) inset, 0 12px 30px rgb(0 0 0 / 35%); }
+.hero[data-etat="ok"] { background: linear-gradient(150deg, #17462d, #0e2a1c); }
+.hero[data-etat="attention"] { background: linear-gradient(150deg, #4e3b13, #2d2108); }
+.hero[data-etat="erreur"] { background: linear-gradient(150deg, #5a2220, #331212); }
+.hero-salut { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--accent-fort); }
+.hero[data-etat="ok"] .hero-salut { color: var(--ok-texte); }
+.hero[data-etat="attention"] .hero-salut { color: var(--alerte-texte); }
+.hero[data-etat="erreur"] .hero-salut { color: var(--erreur-texte); }
+.hero-phrase { margin: 2px 0 0; font-family: var(--chiffres); font-size: 1.5rem; font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+
+/* ---------- Courbes : zone colorée sous la ligne et rond sur la dernière valeur ---------- */
+.defs-courbes { position: absolute; width: 0; height: 0; overflow: hidden; }
+.courbe-zone { fill: url(#degrade-courbe); stroke: none; }
+.courbe-point { fill: none; stroke: var(--accent); stroke-width: 9; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.courbe { overflow: visible; } /* le rond de la dernière valeur dépasse un peu du cadre */
+.courbe polyline { stroke-linecap: round; }
+
+/* ---------- Concours : on glisse la carte (droite = publier, gauche = refuser) ---------- */
+.pile-carte { touch-action: pan-y; user-select: none; -webkit-user-select: none; transition: transform 0.3s var(--elan), opacity 0.3s, background 0.2s; animation: apparait 0.34s var(--elan) backwards; }
+.pile-carte.glisse { transition: none; cursor: grabbing; }
+.pile-carte[data-glisse="ok"] { background: linear-gradient(160deg, #1f6a41, #124226); color: var(--ok-texte); }
+.pile-carte[data-glisse="no"] { background: linear-gradient(160deg, #7a2d2a, #451918); color: var(--erreur-texte); }
+.pile-carte[data-glisse]::after { position: absolute; top: 12px; font-size: 0.95rem; font-weight: 800; }
+.pile-carte[data-glisse="ok"]::after { content: "✅ Publier"; left: 16px; }
+.pile-carte[data-glisse="no"]::after { content: "❌ Refuser"; right: 16px; }
+.pile-carte.envol-ok { transform: translateX(120%) rotate(14deg); opacity: 0; transition: transform 0.34s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.34s ease-in; }
+.pile-carte.envol-no { transform: translateX(-120%) rotate(-14deg); opacity: 0; transition: transform 0.34s cubic-bezier(0.5, 0, 0.9, 0.4), opacity 0.34s ease-in; }
+
+/* ---------- Bulle d'action (« ✅ Publié · Annuler ») ---------- */
+.bulle {
+  position: fixed; left: 0; right: 0; bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 40; overflow: hidden;
+  width: min(calc(100% - 24px), 520px); margin: 0 auto; padding: 12px 12px 14px 16px;
+  display: flex; align-items: center; gap: 12px; border-radius: 16px; background: #232d40; border: 1px solid var(--bordure);
+  box-shadow: 0 14px 34px rgb(0 0 0 / 55%); animation: bulle-entre 0.34s var(--elan) backwards;
+}
+.bulle-texte { flex: 1 1 auto; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.bulle .bouton { min-height: 40px; padding: 0 14px; font-size: 0.9rem; }
+.bulle::after { content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; background: var(--accent); transform-origin: left; animation: minuteur 6s linear forwards; }
+.bulle.sortie { animation: bulle-sort 0.26s ease-in forwards; }
+@keyframes bulle-entre { from { opacity: 0; transform: translateY(24px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes bulle-sort { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(16px) scale(0.97); } }
+@keyframes minuteur { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* Si le téléphone demande « réduire les animations », on coupe tout mouvement. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

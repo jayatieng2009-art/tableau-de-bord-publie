@@ -10,6 +10,8 @@ import {
   rangerEnOnglets, pastilleOnglet, rapprocherProduits, depotDepuisLien, cleGithubValide, messageErreurGithub, choisirCleGithub,
   depotProspection, lireListeProspection, classerProspection, resumeProspection, tacheProspection, titreOrdreProspection,
   ordresProspectionEnAttente, reponseDuWorkflow, messageListeProspection, ligneVideosDeDemain,
+  doitRedessiner, empreinteDuRendu, directionGlisse, decisionDeGlisse, GLISSE_APERCU_PX, entierAnimable, valeurAnimee,
+  zoneSousCourbe, dernierPoint, salutation, phraseAccueil, traitsIcone,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -22,6 +24,11 @@ const contenu = document.getElementById("contenu");
 const generation = document.getElementById("generation");
 // Page publiée en ligne (GitHub Pages) : pas de serveur privé, les données sont dans un fichier chiffré que le mot de passe ouvre.
 const EN_LIGNE = document.body.dataset.mode === "en-ligne";
+
+// « Réduire les animations » demandé par le téléphone : plus de mouvement du tout (le CSS s'éteint aussi tout seul).
+const REDUIRE_MOUVEMENT = window.matchMedia("(prefers-reduced-motion: reduce)");
+const sansMouvement = () => REDUIRE_MOUVEMENT.matches;
+document.body.classList.add("entree"); // retirée peu après le premier affichage : seules les apparitions du début sont animées
 
 function el(balise, classe, texte) {
   const noeud = document.createElement(balise);
@@ -142,11 +149,168 @@ function courbeSvg(valeurs, libelle) {
   svg.setAttribute("aria-label", libelle);
   const points = pointsCourbe(valeurs, 300, 56);
   if (points) {
+    degradeDesCourbes();
+    const zone = document.createElementNS(SVG, "polygon");
+    zone.setAttribute("points", zoneSousCourbe(points, 60)); // 60 = bas de l'image (viewBox -4 + 64)
+    zone.setAttribute("class", "courbe-zone");
     const ligne = document.createElementNS(SVG, "polyline");
     ligne.setAttribute("points", points);
-    svg.append(ligne);
+    svg.append(zone, ligne);
+    const fin = dernierPoint(points);
+    if (fin) {
+      // Un trait de longueur nulle au bout arrondi = un rond, qui reste rond même quand l'image est étirée.
+      const rond = document.createElementNS(SVG, "line");
+      for (const [nom, valeur] of [["x1", fin.x], ["y1", fin.y], ["x2", fin.x], ["y2", fin.y]]) rond.setAttribute(nom, String(valeur));
+      rond.setAttribute("class", "courbe-point");
+      svg.append(rond);
+    }
   }
   return svg;
+}
+
+// Le dégradé sous les courbes : défini une seule fois pour toute la page.
+function degradeDesCourbes() {
+  if (document.getElementById("degrade-courbe")) return;
+  const defs = document.createElementNS(SVG, "svg");
+  defs.setAttribute("class", "defs-courbes");
+  defs.setAttribute("width", "0");
+  defs.setAttribute("height", "0");
+  defs.setAttribute("aria-hidden", "true");
+  const degrade = document.createElementNS(SVG, "linearGradient");
+  degrade.id = "degrade-courbe";
+  for (const [nom, valeur] of [["x1", "0"], ["y1", "0"], ["x2", "0"], ["y2", "1"]]) degrade.setAttribute(nom, valeur);
+  for (const [offset, opacite] of [["0", "0.34"], ["1", "0"]]) {
+    const arret = document.createElementNS(SVG, "stop");
+    arret.setAttribute("offset", offset);
+    arret.setAttribute("stop-color", "#7ea2ff");
+    arret.setAttribute("stop-opacity", opacite);
+    degrade.append(arret);
+  }
+  defs.append(degrade);
+  document.body.append(defs);
+}
+
+// Une icône de la barre du bas : des traits fins dessinés (lib.js), à la couleur du texte.
+function iconeSvg(id) {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const d of traitsIcone(id)) {
+    const trait = document.createElementNS(SVG, "path");
+    trait.setAttribute("d", d);
+    svg.append(trait);
+  }
+  return svg;
+}
+
+// Au premier affichage, les gros chiffres « comptent » de 0 à leur valeur ; le texte d'origine est remis exactement à la fin.
+const DUREE_COMPTE_MS = 750;
+function animerChiffres(racine) {
+  if (sansMouvement() || !document.body.classList.contains("entree")) return;
+  for (const noeud of racine.querySelectorAll(".gt-valeur, .tuile-valeur")) {
+    const texte = noeud.textContent;
+    const cible = entierAnimable(texte);
+    if (cible === null || cible === 0) continue;
+    const debut = performance.now() + 150; // après l'apparition de la tuile
+    noeud.textContent = "0";
+    const pas = (maintenant) => {
+      const progression = (maintenant - debut) / DUREE_COMPTE_MS;
+      if (progression >= 1 || !noeud.isConnected) {
+        noeud.textContent = texte;
+        return;
+      }
+      if (progression > 0) noeud.textContent = formaterNombre(valeurAnimee(cible, progression));
+      requestAnimationFrame(pas);
+    };
+    requestAnimationFrame(pas);
+  }
+}
+
+// ---------- Bulle d'action : « ✅ Publié · Annuler » glisse en bas, puis s'en va toute seule ----------
+
+const DUREE_BULLE_MS = 6000; // la même durée que la barre qui se vide (style.css)
+let bulleActive = null;
+
+function annoncer(texte, action) {
+  if (bulleActive) bulleActive.retirer(true);
+  const noeud = el("div", "bulle");
+  noeud.setAttribute("role", "status");
+  noeud.append(el("span", "bulle-texte", texte));
+  let minuteur = null;
+  const retirer = (vite = false) => {
+    clearTimeout(minuteur);
+    if (bulleActive && bulleActive.noeud === noeud) bulleActive = null;
+    if (vite || sansMouvement()) {
+      noeud.remove();
+      return;
+    }
+    noeud.classList.add("sortie");
+    setTimeout(() => noeud.remove(), 280);
+  };
+  if (action) {
+    noeud.append(bouton(action.libelle, "bouton-secondaire", () => {
+      retirer(true);
+      action.auClic();
+    }));
+  }
+  document.body.append(noeud);
+  bulleActive = { noeud, retirer };
+  minuteur = setTimeout(() => retirer(), DUREE_BULLE_MS);
+}
+
+// ---------- Glisser la carte d'un concours : à droite on publie, à gauche on refuse (les gros boutons restent) ----------
+
+// `trouverBouton(sens)` rend le vrai bouton « Publier » / « Refuser » (ou null s'il n'est pas disponible) : glisser revient à l'appuyer.
+// Si l'envoi échoue, la pile fait revenir la carte (option `echec` de zoneDecision).
+function installerGlisse(carte, trouverBouton) {
+  let doigt = null;
+  const remettre = () => {
+    carte.classList.remove("glisse");
+    delete carte.dataset.glisse;
+    carte.style.transform = "";
+  };
+  carte.addEventListener("pointerdown", (e) => {
+    if ((e.pointerType === "mouse" && e.button !== 0) || !(trouverBouton("ok") || trouverBouton("no"))) return;
+    doigt = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), actif: false };
+  });
+  carte.addEventListener("pointermove", (e) => {
+    if (!doigt || e.pointerId !== doigt.id) return;
+    const dx = e.clientX - doigt.x;
+    const dy = e.clientY - doigt.y;
+    if (!doigt.actif) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx)) { // geste vertical : le téléphone fait défiler la page, on s'écarte
+        doigt = null;
+        return;
+      }
+      doigt.actif = true;
+      try {
+        carte.setPointerCapture(e.pointerId); // le doigt peut sortir de la carte sans perdre le geste
+      } catch {
+        // pointeur déjà relâché : le glissement marche quand même
+      }
+      carte.classList.add("glisse");
+    }
+    carte.style.transform = `translateX(${Math.round(dx)}px) rotate(${Math.max(-12, Math.min(12, dx / 14)).toFixed(1)}deg)`;
+    const sens = directionGlisse(dx, dy, GLISSE_APERCU_PX);
+    if (sens && trouverBouton(sens)) carte.dataset.glisse = sens;
+    else delete carte.dataset.glisse;
+  });
+  const lacher = (e) => {
+    if (!doigt || e.pointerId !== doigt.id) return;
+    const { x, y, t, actif } = doigt;
+    doigt = null;
+    if (!actif) return;
+    const sens = e.type === "pointerup" ? decisionDeGlisse(e.clientX - x, e.clientY - y, performance.now() - t) : null;
+    const cible = sens ? trouverBouton(sens) : null;
+    remettre();
+    if (!cible) return;
+    carte.classList.add(sens === "ok" ? "envol-ok" : "envol-no");
+    cible.click();
+  };
+  carte.addEventListener("pointerup", lacher);
+  carte.addEventListener("pointercancel", lacher);
 }
 
 function blocCourbe(titre, courbe, cle) {
@@ -323,7 +487,7 @@ function dessinerCommandes(zone, etat, actions) {
       ecrireMessage(message, verdict.message, verdict.fini ? (verdict.reussi ? "ok" : "erreur") : "info");
       if (verdict.fini) {
         dernierResultat = { texte: verdict.message, reussi: verdict.reussi };
-        await charger(); // redessine toute la carte : le voyant du direct suit l'état réel
+        await charger(true); // redessine toute la carte : le voyant du direct suit l'état réel
         return;
       }
     }
@@ -436,7 +600,7 @@ function dessinerCommandesEnLigne(zone, enCours, maintenant) {
       dernierResultat = texte
         ? { texte, reussi: /^(Exécuté|Verrouillé)/.test(texte) }
         : { texte: "Pas de réponse du PC pour l'instant (est-il allumé ?). Sans réponse dans les 10 minutes, l'ordre sera ignoré.", reussi: false };
-      await charger();
+      await charger(true);
     });
     const annuler = bouton("Annuler", "bouton-secondaire", () => {
       fermer();
@@ -570,6 +734,13 @@ const FORMAT_RENDEZ_VOUS = new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Europe/Paris", weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
 });
 const FORMAT_HEURE = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
+const FORMAT_HEURE_PARIS = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "numeric", hourCycle: "h23" });
+
+// L'heure de Paris, de 0 à 23 (NaN si elle est illisible : la salutation retombe sur « Bonjour »).
+function heureDeParis(date) {
+  const heure = FORMAT_HEURE_PARIS.formatToParts(date).find((p) => p.type === "hour");
+  return heure ? Number(heure.value) : NaN;
+}
 const ordresEnvoyes = new Map(); // code de carte -> "ok" | "no" : ordres envoyés depuis cette page (le dépôt ne les montre que plus tard)
 let rapprochement = { parLocal: {}, sansDossier: [], disponible: false }; // produits locaux rapprochés de la boutique Gumroad (calculé à chaque affichage)
 let confirmationsOuvertes = 0; // tant qu'une confirmation est ouverte, la page ne se rafraîchit pas toute seule
@@ -742,12 +913,12 @@ function sectionCleGithub() {
     }
     ecrireStockage(CLE_JETON_GITHUB, saisie);
     champ.value = "";
-    await charger();
+    await charger(true);
   });
   const oublier = bouton("Oublier la clé", "bouton-secondaire", async () => {
     oublierStockage(CLE_JETON_GITHUB);
     ordresEnvoyes.clear();
-    await charger();
+    await charger(true);
   });
   const explication = el("p", "discret",
     "Sur github.com, connecté au compte qui possède le bot : Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token. "
@@ -794,6 +965,7 @@ function zoneDecision(c, options = {}) {
         if (!demande.ok) {
           ecrireMessage(message, demande.json && demande.json.erreur ? demande.json.erreur : "Décision impossible.", "erreur");
           dessiner();
+          if (typeof options.echec === "function") options.echec();
           return;
         }
         jeton = demande.json.jeton;
@@ -802,6 +974,7 @@ function zoneDecision(c, options = {}) {
       if (!reponse.ok) {
         ecrireMessage(message, reponse.json && reponse.json.erreur ? reponse.json.erreur : "Décision impossible.", "erreur");
         dessiner();
+        if (typeof options.echec === "function") options.echec();
         return;
       }
       if (EN_LIGNE && reponse.json && Number.isInteger(reponse.json.numero)) numerosOrdres.set(c.code, reponse.json.numero);
@@ -819,8 +992,6 @@ function zoneDecision(c, options = {}) {
 }
 
 const reportesConcours = []; // codes passés « pour plus tard » : renvoyés au bout de la pile (jusqu'au rechargement de la page)
-let confirmationPile = null; // texte de la dernière décision envoyée, montré au-dessus du concours suivant
-let dernierOrdre = null; // { code } : le dernier ordre donné ici, que « Annuler cet ordre » peut reprendre (page en ligne seulement)
 let filtreConcours = {}; // { plateforme, urgent } : ce que la pile montre
 const numerosOrdres = new Map(); // code de carte -> numéro du ticket de son ordre (page en ligne) : pour reprendre une décision
 const PAUSE_ENTRE_ORDRES_MS = 1200; // GitHub limite les créations de tickets trop rapprochées
@@ -907,19 +1078,17 @@ function pileConcours(cartes, maintenant) {
     return b;
   }
 
-  function blocConfirmation() {
-    const bloc = el("div", "pile-confirmation");
-    bloc.append(el("span", "", confirmationPile));
-    if (EN_LIGNE && dernierOrdre && numerosOrdres.has(dernierOrdre.code)) {
-      const { code } = dernierOrdre;
-      bloc.append(bouton("Annuler cet ordre", "bouton-secondaire", async () => {
+  // « Annuler » de la bulle (page en ligne : l'ordre est un ticket GitHub que l'on peut reprendre tant que le bot ne l'a pas lu).
+  function actionAnnuler(code) {
+    if (!EN_LIGNE || !numerosOrdres.has(code)) return null;
+    return {
+      libelle: "Annuler",
+      auClic: async () => {
         const reprise = await reprendreDecision(code);
-        confirmationPile = reprise.ok ? "Annulé : le concours revient." : reprise.erreur;
-        dernierOrdre = null;
+        annoncer(reprise.ok ? "Annulé : le concours revient." : reprise.erreur);
         dessiner();
-      }));
-    }
-    return bloc;
+      },
+    };
   }
 
   function panneauDeLots(groupes) {
@@ -948,10 +1117,9 @@ function pileConcours(cartes, maintenant) {
         const resultat = await refuserEnLot(groupe.codes, (fait) => ecrireMessage(message, `Envoi en cours : ${fait} sur ${n}…`, "info"));
         fermer();
         panneauLot = false;
-        dernierOrdre = null;
-        confirmationPile = resultat.erreur
+        annoncer(resultat.erreur
           ? `${resultat.envoyes} refus envoyés, puis arrêt : ${resultat.erreur}`
-          : `${resultat.envoyes} refus envoyés ✓`;
+          : `${resultat.envoyes} refus envoyés ✓`);
         dessiner();
       });
       const non = bouton("Annuler", "bouton-secondaire", () => {
@@ -978,7 +1146,6 @@ function pileConcours(cartes, maintenant) {
       toute.length > 0 ? el("span", "badge-compteur", filtreActif() ? `${pile.length} sur ${toute.length}` : `${toute.length} à décider`) : el("span", "badge-ok", "Tout est décidé"),
     );
     const noeuds = [entete];
-    if (confirmationPile) noeuds.push(blocConfirmation());
     if (toute.length === 0) {
       noeuds.push(el("p", "discret pile-vide", "Tout est décidé ✓"));
       zone.replaceChildren(...noeuds);
@@ -1022,13 +1189,24 @@ function pileConcours(cartes, maintenant) {
     noeuds.push(grande);
     const voir = lien("Voir le concours", lienPlateforme(c.url), "lien lien-pile");
     if (voir) noeuds.push(voir);
+    const boutonDe = (sens) => {
+      const b = zone.querySelector(sens === "ok" ? ".bouton-publier" : ".bouton-refuser");
+      return b && !b.disabled ? b : null;
+    };
+    installerGlisse(grande, boutonDe);
     noeuds.push(zoneDecision(c, {
       grand: true,
       apres: (action) => {
-        dernierOrdre = { code: c.code };
-        confirmationPile = `${action === "ok" ? "✅ Publié" : "❌ Refusé"} : ${abreger(p.titre, 45)}`;
-        dessiner();
+        annoncer(`${action === "ok" ? "✅ Publié" : "❌ Refusé"} : ${abreger(p.titre, 45)}`, actionAnnuler(c.code));
+        // La carte s'envole du côté de la décision, puis la suivante apparaît.
+        if (sansMouvement()) {
+          dessiner();
+          return;
+        }
+        grande.classList.add(action === "ok" ? "envol-ok" : "envol-no");
+        setTimeout(dessiner, 340);
       },
+      echec: () => grande.classList.remove("envol-ok", "envol-no"), // l'envoi a échoué : la carte revient
     }));
     if (!decisionsDisponibles) {
       noeuds.push(el("p", "discret", EN_LIGNE
@@ -1040,7 +1218,6 @@ function pileConcours(cartes, maintenant) {
         const deja = reportesConcours.indexOf(c.code);
         if (deja >= 0) reportesConcours.splice(deja, 1);
         reportesConcours.push(c.code);
-        confirmationPile = null;
         dessiner();
       }));
     }
@@ -1076,7 +1253,7 @@ function carteConcours(projet, maintenant) {
   const alertes = liste(d.a_faire);
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", String(projet.nom ?? "Concours Gratuits FR")));
-  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
+  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   carte.append(entete);
 
   // Les vidéos de demain dans le groupe Telegram : une ligne d'état (les problèmes sont dits plus bas, avec les alertes) et un appui pour ouvrir chaque groupe.
@@ -1114,8 +1291,8 @@ function carteConcours(projet, maintenant) {
       const reprendre = EN_LIGNE && numerosOrdres.has(c.code)
         ? groupeDeLiens("fp-liens", bouton("Reprendre", "bouton-secondaire", async () => {
           const reprise = await reprendreDecision(c.code);
-          confirmationPile = reprise.ok ? "Décision annulée : le concours revient dans la pile." : reprise.erreur;
-          await charger();
+          annoncer(reprise.ok ? "Décision annulée : le concours revient dans la pile." : reprise.erreur);
+          await charger(true);
         }))
         : null;
       return ligneFp(presenterConcours(c, maintenant).titre, libelleOrdre(ordre) ?? "Accepté : publication au prochain passage", reprendre);
@@ -1218,7 +1395,7 @@ function carteProduits(projet, maintenant) {
 
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", String(projet.nom ?? "Produits numériques")));
-  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
+  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   carte.append(entete);
   carte.append(groupeDeLiens(
     "fp-acces",
@@ -1299,7 +1476,7 @@ function enteteDeCarte(projet, titreParDefaut, badge) {
   const entete = el("div", "fp-entete");
   entete.append(el("h3", "", String(projet.nom ?? titreParDefaut)));
   if (badge) entete.append(badge);
-  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger()));
+  entete.append(bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   return entete;
 }
 
@@ -1477,7 +1654,7 @@ function sectionEntreesRevenus(etat) {
 function carteRevenus(etat) {
   const carte = el("article", "carte carte-large");
   const entete = el("div", "fp-entete");
-  entete.append(el("h3", "", "Revenus"), el("span", "badge-attention", "Saisie à la main"), bouton("Actualiser", "bouton-secondaire", () => charger()));
+  entete.append(el("h3", "", "Revenus"), el("span", "badge-attention", "Saisie à la main"), bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   carte.append(entete);
   carte.append(el("p", "discret", EN_LIGNE
     ? "Copie en lecture seule du carnet tenu sur le PC. Le revenu Gumroad automatique est dans sa propre carte."
@@ -1542,7 +1719,7 @@ function carteRevenus(etat) {
     const reponse = await poster("api/revenus/ajouter", { date: date.value, source: source.value, montant: montant.value, note: note.value });
     if (reponse.ok) messageRevenus = { texte: "Revenu ajouté.", reussi: true };
     else messageRevenus = { texte: reponse.json && reponse.json.erreur ? reponse.json.erreur : "Ajout impossible.", reussi: false };
-    await charger();
+    await charger(true);
   });
   const formulaire = el("div", "rev-formulaire");
   formulaire.append(champ("Date", date), champ("Source", source), champ("Montant (€)", montant), champ("Note", note), ajouter);
@@ -1563,7 +1740,7 @@ function carteRevenus(etat) {
         messageRevenus = reponse.ok
           ? { texte: "Dernière entrée supprimée.", reussi: true }
           : { texte: reponse.json && reponse.json.erreur ? reponse.json.erreur : "Suppression impossible.", reussi: false };
-        await charger();
+        await charger(true);
       });
     });
     carte.append(supprimer);
@@ -1601,7 +1778,7 @@ function blocVentes(ventes, maintenant) {
 function carteBoutique(produits, gumroad, etat, carteDesRevenus, maintenant) {
   const carte = el("article", "carte carte-large");
   const entete = el("div", "fp-entete");
-  entete.append(el("h3", "", "Boutique"), bouton("Actualiser", "bouton-secondaire", () => charger()));
+  entete.append(el("h3", "", "Boutique"), bouton("Actualiser", "bouton-secondaire", () => charger(true)));
   carte.append(entete);
 
   const g = objet(gumroad && gumroad.details);
@@ -1820,7 +1997,7 @@ function ligneProspection(a, maintenant, rafraichir) {
     const texte = await attendreReponseWorkflow(reponse.numero);
     messagesProspection.delete(a.id);
     reponsesProspection.set(a.id, texte ?? "Pas encore de réponse de GitHub : regarde de nouveau dans quelques minutes.");
-    await charger();
+    await charger(true);
   };
 
   const profil = lien("Ouvrir le profil", a.lien, "bouton bouton-secondaire");
@@ -1929,6 +2106,11 @@ function blocAccueil(projets, etat, maintenant) {
   const agenda = construireAgenda(projets, maintenant);
   if (tuiles.length === 0 && groupes.length === 0 && agenda.length === 0) return null;
   const section = el("section", "accueil");
+  const phrase = phraseAccueil(groupes, bilanSemaine(projets, maintenant));
+  const hero = el("div", "hero");
+  hero.dataset.etat = phrase.etat; // vert / orange / rouge selon ce qu'il y a à faire
+  hero.append(el("p", "hero-salut", salutation(heureDeParis(maintenant))), el("p", "hero-phrase", phrase.texte));
+  section.append(hero);
   if (tuiles.length > 0) {
     const grille = el("div", "grosses-tuiles");
     for (const t of tuiles) grille.append(grosseTuile(t, ICONES_TUILES[t.id]));
@@ -2023,7 +2205,6 @@ function carteDuProjet(projet, maintenant) {
 // ---------- Onglets : un thème à la fois, pour ne pas faire défiler toute la page sur téléphone ----------
 
 const CLE_ONGLET = "tableau.onglet";
-const ICONES_ONGLETS = { resume: "🏠", concours: "🎁", boutique: "🛍️", tiktok: "🎵", live: "🔴", autres: "📁" };
 let ongletActif = null;
 let allerVersOnglet = () => {}; // rebranché à chaque affichage : ouvre l'onglet demandé (tuiles et lignes de l'accueil)
 
@@ -2048,7 +2229,8 @@ function barreDOnglets(onglets, panneaux, projets) {
   barre.setAttribute("role", "tablist");
   barre.setAttribute("aria-label", "Rubriques du tableau");
   const boutons = [];
-  const choisir = (id, focus = false) => {
+  // `anime` : le panneau glisse en douceur quand c'est l'utilisateur qui change de rubrique (pas au simple redessin de la page).
+  const choisir = (id, focus = false, anime = false) => {
     ongletActif = id;
     memoriserOnglet(id);
     for (const b of boutons) {
@@ -2058,6 +2240,13 @@ function barreDOnglets(onglets, panneaux, projets) {
       if (actif && focus) b.focus();
     }
     for (const [cle, panneau] of panneaux) panneau.hidden = cle !== id;
+    const arrivant = panneaux.get(id);
+    if (anime && arrivant && !sansMouvement()) {
+      arrivant.classList.remove("entrant");
+      void arrivant.offsetWidth; // relance l'animation même si l'on rechoisit la même rubrique
+      arrivant.classList.add("entrant");
+      arrivant.addEventListener("animationend", () => arrivant.classList.remove("entrant"), { once: true });
+    }
   };
   onglets.forEach((o, i) => {
     const bouton = el("button", "onglet");
@@ -2066,25 +2255,27 @@ function barreDOnglets(onglets, panneaux, projets) {
     bouton.dataset.onglet = o.id;
     bouton.id = `onglet-${o.id}`;
     bouton.setAttribute("aria-controls", `panneau-${o.id}`);
-    bouton.append(el("span", "onglet-icone", ICONES_ONGLETS[o.id] ?? "📁"), el("span", "onglet-titre", o.titre));
+    const icone = el("span", "onglet-icone");
+    icone.append(iconeSvg(o.id));
+    bouton.append(icone, el("span", "onglet-titre", o.titre));
     const pastille = pastilleOnglet(o.id, projets);
     if (pastille) bouton.append(el("span", `pastille pastille-${pastille.niveau}`, pastille.texte));
     bouton.addEventListener("click", () => {
-      choisir(o.id);
+      choisir(o.id, false, true);
       window.scrollTo(0, 0);
     });
     bouton.addEventListener("keydown", (e) => {
       const decalage = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
       if (decalage === 0) return;
       e.preventDefault();
-      choisir(onglets[(i + decalage + onglets.length) % onglets.length].id, true);
+      choisir(onglets[(i + decalage + onglets.length) % onglets.length].id, true, true);
     });
     boutons.push(bouton);
     barre.append(bouton);
   });
   allerVersOnglet = (id) => {
     if (!onglets.some((o) => o.id === id)) return;
-    choisir(id);
+    choisir(id, false, true);
     window.scrollTo(0, 0);
   };
   return { barre, choisir };
@@ -2158,7 +2349,6 @@ function afficher(paquet) {
     if (cartes.childElementCount > 0) panneau.append(cartes);
     panneaux.set(o.id, panneau);
   }
-  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant, chargeEnLigne.cloud_a) : null; // dit dans le sous-titre, sans bandeau
   const noeuds = [];
   if (onglets.length === 0) {
     noeuds.push(el("p", "discret", "Aucun projet dans ce relevé."));
@@ -2174,6 +2364,13 @@ function afficher(paquet) {
   contenu.replaceChildren(...noeuds);
   contenu.hidden = false;
   message.textContent = "";
+  ecrireSousTitre(paquet, maintenant);
+  animerChiffres(contenu);
+}
+
+// Sous le titre : depuis quand les données datent, ou « PC éteint » (dit ici, sans bandeau).
+function ecrireSousTitre(paquet, maintenant) {
+  const pcEteint = EN_LIGNE && chargeEnLigne ? messagePcEteint(chargeEnLigne.publie_a, maintenant, chargeEnLigne.cloud_a) : null;
   generation.textContent = EN_LIGNE && chargeEnLigne
     ? (pcEteint ?? `Mis à jour ${ageLisible(chargeEnLigne.publie_a, maintenant)}`)
     : `Mis à jour ${ageLisible(paquet.genere_a, maintenant)}`;
@@ -2306,7 +2503,11 @@ async function lireReleveCloud() {
   }
 }
 
-async function chargerUneFois() {
+let derniereEmpreinte = null; // ce qui a servi au dernier dessin de la page : s'il n'a pas changé, on ne redessine pas
+let dernierRenduMs = null;
+let entreeTerminee = false;
+
+async function chargerUneFois(force = false) {
   let paquet;
   try {
     if (EN_LIGNE) {
@@ -2335,24 +2536,41 @@ async function chargerUneFois() {
   decisionsDisponibles = EN_LIGNE ? Boolean(lireJetonGithub()) : (await lireEtatDecisions()) !== null;
   if (EN_LIGNE && decisionsDisponibles) await Promise.all([lireOrdresEnAttenteGithub(), lireProspection()]);
   etatRevenus = EN_LIGNE ? ((chargeEnLigne && chargeEnLigne.revenus) || null) : await lireEtatRevenus();
+  // Rafraîchissement automatique : si rien n'a changé, la page reste exactement comme elle est (pas de clignotement, on garde sa place).
+  const empreinte = empreinteDuRendu([
+    paquet, etatRevenus, decisionsDisponibles, listeProspection, historiqueOrdres, dernierResultat, [...ordresEnvoyes], [...numerosOrdres],
+  ]);
+  if (!doitRedessiner(derniereEmpreinte, empreinte, dernierRenduMs, Date.now(), force)) {
+    ecrireSousTitre(paquet, new Date());
+    return;
+  }
   const ouvertes = Array.from(document.querySelectorAll("details.fp-section")).map((d) => d.open);
+  const haut = window.scrollY;
   try {
     afficher(paquet);
   } catch {
     afficherMessage("Données illisibles : le fichier est abîmé ou d'une version inconnue.", "erreur");
     return;
   }
-  // La page se redessine : on garde les sections que l'utilisateur avait ouvertes ou fermées (même structure seulement).
+  derniereEmpreinte = empreinte;
+  dernierRenduMs = Date.now();
+  // La page se redessine : on garde les sections que l'utilisateur avait ouvertes ou fermées (même structure seulement) et sa place.
   const sections = Array.from(document.querySelectorAll("details.fp-section"));
   if (sections.length === ouvertes.length) sections.forEach((d, i) => { d.open = ouvertes[i]; });
+  if (haut > 0) window.scrollTo(0, haut);
+  if (!entreeTerminee) {
+    entreeTerminee = true;
+    setTimeout(() => document.body.classList.remove("entree"), 1500); // les apparitions du début sont finies : plus rien ne rejoue
+  }
 }
 
 // Une seule lecture à la fois : le rafraîchissement automatique ne doit pas empiler des formulaires de mot de passe.
-async function charger() {
+// `force` : demandé à la main (bouton, tirer vers le bas, après une action) -> la page est toujours redessinée.
+async function charger(force = false) {
   if (chargementEnCours) return;
   chargementEnCours = true;
   try {
-    await chargerUneFois();
+    await chargerUneFois(force);
   } finally {
     chargementEnCours = false;
   }
@@ -2383,7 +2601,7 @@ function installerTirerPourActualiser() {
   document.addEventListener("touchend", () => {
     const actualiser = doitActualiser(distance);
     reinitialiser();
-    if (actualiser) charger();
+    if (actualiser) charger(true);
   }, { passive: true });
   document.addEventListener("touchcancel", reinitialiser, { passive: true });
 }

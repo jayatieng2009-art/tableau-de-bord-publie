@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="dark">
   <meta name="robots" content="noindex, nofollow">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.github.com; img-src 'self' data:; manifest-src 'self'; form-action 'none'; base-uri 'none'">
-  <meta name="theme-color" content="#2457d6">
+  <meta name="theme-color" content="#0b0e14">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Tableau">
   <link rel="icon" href="icone-192.png" type="image/png">
   <link rel="manifest" href="manifest.webmanifest">
@@ -25,6 +26,15 @@
 
     <p id="message" role="status" aria-live="polite">Chargement…</p>
     <div id="contenu" hidden></div>
+    <div class="squelette" aria-hidden="true">
+      <div class="squelette-tuiles">
+        <div class="squelette-bloc squelette-tuile"></div>
+        <div class="squelette-bloc squelette-tuile"></div>
+        <div class="squelette-bloc squelette-tuile"></div>
+        <div class="squelette-bloc squelette-tuile"></div>
+      </div>
+      <div class="squelette-bloc squelette-carte"></div>
+    </div>
   </main>
   <script type="module" src="app.js"></script>
 </body>
