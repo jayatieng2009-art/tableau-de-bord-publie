@@ -407,3 +407,25 @@ body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2
 .carte-tiktok .fp-entete { margin-bottom: 4px; }
 .carte-tiktok .grosses-tuiles { margin: 10px 0 8px; }
 .carte-tiktok .alerte { margin-bottom: 6px; }
+
+/* ---------- Publier : l'agenda des vidéos (une ligne par vidéo, des boutons pour copier et enregistrer) ---------- */
+.carte-agenda .fp-acces { margin: 10px 0 4px; }
+.agenda-vide { margin: 12px 0 4px; }
+.agenda-video { padding: 12px 0; border-top: 1px solid var(--bordure); transition: opacity 0.25s; }
+.fp-section > .agenda-video:first-of-type { border-top: 0; }
+.agenda-haut { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.agenda-heure { font-family: var(--chiffres); font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.agenda-compte, .agenda-divulgation { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+.agenda-compte-concours { background: var(--accent-fond); color: var(--accent-fort); }
+.agenda-compte-boutique { background: var(--alerte-fond); color: var(--alerte-texte); }
+.agenda-divulgation { background: var(--neutre-fond); color: var(--neutre-texte); }
+.agenda-fait { margin-left: auto; min-height: 34px; padding: 0 12px; font-size: 0.85rem; }
+.agenda-fait[aria-pressed="true"] { background: var(--ok-fond); border-color: transparent; color: var(--ok-texte); }
+.agenda-titre { margin: 6px 0 8px; font-weight: 600; overflow-wrap: anywhere; }
+.agenda-boutons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.agenda-bouton { min-height: 42px; padding: 0 10px; font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.agenda-note { margin-top: 6px; font-size: 0.8125rem; }
+.agenda-faite { opacity: 0.5; }
+.agenda-faite .agenda-boutons { display: none; }
+.agenda-raccourci { margin: 2px 0 8px; }
+@media (min-width: 700px) { .agenda-boutons { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

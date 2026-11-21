@@ -14,6 +14,7 @@ import {
   zoneSousCourbe, dernierPoint, salutation, phraseAccueil, traitsIcone,
   fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
   comptesTiktokDeLOnglet, rappelsDuCompte, rappelsGenerauxTiktok, videosDuCompte, groupesTelegramDe,
+  videosDeLAgenda, groupesAgenda, texteHashtags, idsFaitsValides, basculerFait, pastillePublier, messageAgendaVide, modeEnregistrement,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -1665,6 +1666,7 @@ function blocTiktok(projet, compte, general, maintenant) {
 
   const rappels = [...rappelsDuCompte(d.a_faire, nom), ...(general ? rappelsGenerauxTiktok(d.a_faire) : [])].slice(0, 2);
   for (const r of rappels) carte.append(el("p", `alerte alerte-${r.niveau}`, abreger(r.texte, 80)));
+  if (agendaPresent && rappels.length > 0) carte.append(bouton("📅 Ouvrir l'agenda", "bouton-secondaire agenda-raccourci", () => allerVersOnglet("publier")));
 
   const plus = [];
   plus.push(el("p", "discret", `${formaterNombre(compte.jaime)} j'aime · ${formaterNombre(compte.videos)} vidéos`));
@@ -2248,6 +2250,176 @@ function blocAccueil(projets, etat, maintenant) {
   return section;
 }
 
+// ---------- Publier : l'agenda des vidéos TikTok, pour tout programmer d'avance ----------
+// Une ligne par vidéo : l'heure, le compte, le titre, et des boutons pour copier la légende, les mots-dièses, le commentaire à épingler,
+// et enregistrer la vidéo (tableau privé seulement : le fichier est sur le PC). « Fait » se coche sur cet appareil.
+
+const CLE_FAITS_AGENDA = "tableau.agenda_faits";
+const LIEN_TIKTOK_STUDIO = "https://www.tiktok.com/tiktokstudio/upload";
+const NOMS_DES_PROJETS = { concours: "Concours", boutique: "Boutique" };
+let agendaPresent = false; // rebranché à chaque affichage : les blocs TikTok proposent alors d'ouvrir l'agenda
+
+function lireFaits() {
+  try {
+    return idsFaitsValides(JSON.parse(lireStockage(CLE_FAITS_AGENDA) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function ecrireFaits(ids) {
+  ecrireStockage(CLE_FAITS_AGENDA, JSON.stringify(idsFaitsValides(ids)));
+}
+
+// La pastille de l'onglet « Publier » suit les vidéos cochées, sans redessiner la page.
+function majPastillePublier(videos) {
+  const onglet = document.getElementById("onglet-publier");
+  if (!onglet) return;
+  onglet.querySelector(".pastille")?.remove();
+  const pastille = pastillePublier(videos, jourParis(new Date()), lireFaits());
+  if (pastille) onglet.append(el("span", `pastille pastille-${pastille.niveau}`, pastille.texte));
+}
+
+// Un bouton qui copie un texte et le dit (« ✓ Copié ») pendant un instant.
+function boutonCopier(libelle, texte) {
+  const b = bouton(libelle, "bouton-secondaire agenda-bouton", async () => {
+    const ok = await copierTexte(texte);
+    b.textContent = ok ? "✓ Copié" : "Copie impossible";
+    setTimeout(() => { b.textContent = libelle; }, 1600);
+  });
+  return b;
+}
+
+// « Enregistrer la vidéo ». Sur téléphone : la feuille de partage, d'où l'on choisit « Enregistrer la vidéo » ou TikTok directement ;
+// si le téléphone demande un second appui (la vidéo met du temps à arriver), le bouton devient « 📲 Enregistrer ». Ailleurs : un téléchargement.
+function boutonVideo(v) {
+  const adresse = `api/agenda/video/${v.id}`;
+  const mode = modeEnregistrement({
+    tactile: window.matchMedia("(pointer: coarse)").matches,
+    partageFichiers: typeof navigator.canShare === "function" && typeof navigator.share === "function",
+  });
+  if (mode === "telechargement") {
+    const a = el("a", "bouton bouton-secondaire agenda-bouton", "⬇️ Vidéo");
+    a.href = adresse;
+    a.setAttribute("download", "");
+    return a;
+  }
+  let fichier = null;
+  const b = bouton("⬇️ Vidéo", "bouton-secondaire agenda-bouton", async () => {
+    if (!fichier) {
+      b.disabled = true;
+      b.textContent = "⏳ Préparation…";
+      try {
+        const reponse = await fetch(adresse, { cache: "no-store" });
+        if (!reponse.ok) throw new Error(String(reponse.status));
+        const nom = /filename="([^"]+)"/.exec(reponse.headers.get("Content-Disposition") ?? "")?.[1] ?? `video-${v.jour}-${v.heure}.mp4`;
+        const contenu = await reponse.blob();
+        fichier = new File([contenu], nom, { type: contenu.type || "video/mp4" });
+      } catch {
+        annoncer("Vidéo introuvable : actualise la page.");
+        b.textContent = "⬇️ Vidéo";
+        b.disabled = false;
+        return;
+      }
+      b.disabled = false;
+      b.textContent = "📲 Enregistrer";
+    }
+    if (!navigator.canShare({ files: [fichier] })) {
+      telechargerFichier(fichier);
+      b.textContent = "⬇️ Vidéo";
+      fichier = null;
+      return;
+    }
+    try {
+      await navigator.share({ files: [fichier] });
+      b.textContent = "⬇️ Vidéo";
+      fichier = null;
+    } catch (e) {
+      if (e && e.name === "AbortError") return; // partage annulé : la vidéo reste prête, un appui suffit
+      // le téléphone veut un nouvel appui (la vidéo a mis du temps à arriver) : le bouton dit « 📲 Enregistrer »
+    }
+  });
+  return b;
+}
+
+function telechargerFichier(fichier) {
+  const adresse = URL.createObjectURL(fichier);
+  const a = el("a");
+  a.href = adresse;
+  a.download = fichier.name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(adresse), 60_000);
+}
+
+function ligneAgenda(v, faits, videos) {
+  const ligne = el("div", faits.includes(v.id) ? "agenda-video agenda-faite" : "agenda-video");
+  const haut = el("div", "agenda-haut");
+  haut.append(el("span", "agenda-heure", v.heure), el("span", `agenda-compte agenda-compte-${v.projet}`, NOMS_DES_PROJETS[v.projet]));
+  if (v.divulgation === true) haut.append(el("span", "agenda-divulgation", "📢 Divulgation"));
+  const fait = bouton(faits.includes(v.id) ? "✓ Fait" : "Fait", "bouton-secondaire agenda-fait", () => {
+    const ids = basculerFait(lireFaits(), v.id);
+    ecrireFaits(ids);
+    const coche = ids.includes(v.id);
+    ligne.classList.toggle("agenda-faite", coche);
+    fait.textContent = coche ? "✓ Fait" : "Fait";
+    fait.setAttribute("aria-pressed", String(coche));
+    majPastillePublier(videos);
+    const jour = ligne.closest("details.fp-section");
+    if (jour) majTitreDuJour(jour);
+  });
+  fait.setAttribute("aria-pressed", String(faits.includes(v.id)));
+  haut.append(fait);
+  ligne.append(haut);
+  const titre = [v.format, v.titre].filter(Boolean).join(" · ");
+  if (titre) ligne.append(el("p", "agenda-titre", abreger(titre, 90)));
+
+  const boutons = el("div", "agenda-boutons");
+  if (v.legende) boutons.append(boutonCopier("📋 Légende", v.legende));
+  if (v.hashtags.length > 0) boutons.append(boutonCopier("# Hashtags", texteHashtags(v)));
+  if (v.commentaire) boutons.append(boutonCopier("💬 Commentaire", v.commentaire));
+  if (v.fichier && !EN_LIGNE) boutons.append(boutonVideo(v));
+  if (boutons.childElementCount > 0) ligne.append(boutons);
+  if (!v.fichier) ligne.append(el("p", "discret agenda-note", "Vidéo pas encore prête."));
+  else if (EN_LIGNE) ligne.append(el("p", "discret agenda-note", "La vidéo s'enregistre depuis le tableau privé."));
+  return ligne;
+}
+
+// « Aujourd'hui · samedi 21/11 · 3 à faire » : recompté à chaque coche, sans redessiner la page.
+function majTitreDuJour(section) {
+  const resume = section.querySelector(":scope > summary");
+  if (!resume || !section.dataset.jour) return;
+  const restantes = section.querySelectorAll(".agenda-video:not(.agenda-faite)").length;
+  resume.textContent = `${section.dataset.jour} · ${restantes > 0 ? `${restantes} à faire` : "tout est fait ✓"}`;
+}
+
+function carteAgenda(projet, maintenant) {
+  const d = objet(projet.details);
+  const videos = videosDeLAgenda([projet]);
+  const faits = lireFaits();
+  const carte = el("article", "carte carte-large carte-agenda");
+  const entete = el("div", "fp-entete");
+  const icone = el("span", "titre-icone");
+  icone.append(iconeSvg("publier"));
+  entete.append(icone, el("h3", "", "Vidéos à publier"), bouton("Actualiser", "bouton-secondaire", () => charger(true)));
+  carte.append(entete);
+  carte.append(groupeDeLiens("fp-acces", lien("⬆️ Programmer dans TikTok Studio", LIEN_TIKTOK_STUDIO, "lien lien-principal")));
+
+  const groupes = groupesAgenda(videos, jourParis(maintenant));
+  if (groupes.length === 0) {
+    carte.append(el("p", "discret agenda-vide", messageAgendaVide(d)));
+    return carte;
+  }
+  for (const g of groupes) {
+    const section = sectionFp(g.titre, g.relatif !== "plus-tard", ...g.videos.map((v) => ligneAgenda(v, faits, videos)));
+    section.dataset.jour = g.titre;
+    majTitreDuJour(section);
+    carte.append(section);
+  }
+  return carte;
+}
+
 // Une carte qui plante sur des données inattendues ne doit pas faire disparaître la page : on la remplace par un message.
 function carteSure(projet, maintenant, construire) {
   try {
@@ -2261,6 +2433,7 @@ function carteSure(projet, maintenant, construire) {
 
 function carteDuProjet(projet, maintenant) {
   if (projet.adaptateur === "bot-concours" && projet.statut === "ok") return carteSure(projet, maintenant, carteConcours);
+  if (projet.adaptateur === "agenda-videos" && projet.statut === "ok") return carteSure(projet, maintenant, carteAgenda);
   if (projet.adaptateur === "produits-numeriques" && projet.statut === "ok") return carteSure(projet, maintenant, carteProduits);
   if (projet.adaptateur === "gumroad" && projet.statut === "ok") return carteSure(projet, maintenant, carteGumroad);
   if (projet.adaptateur === "falling-pickaxe" && projet.statut === "ok") {
@@ -2331,7 +2504,7 @@ function barreDOnglets(onglets, panneaux, projets) {
     const icone = el("span", "onglet-icone");
     icone.append(iconeSvg(o.id));
     bouton.append(icone, el("span", "onglet-titre", o.titre));
-    const pastille = pastilleOnglet(o.id, projets);
+    const pastille = o.id === "publier" ? pastillePublier(videosDeLAgenda(projets), jourParis(new Date()), lireFaits()) : pastilleOnglet(o.id, projets);
     if (pastille) bouton.append(el("span", `pastille pastille-${pastille.niveau}`, pastille.texte));
     bouton.addEventListener("click", () => {
       choisir(o.id, false, true);
@@ -2360,6 +2533,7 @@ function afficher(paquet) {
   const rang = (r) => (estPerime(r.releve_a, maintenant, r.seuil_perime_heures) ? 1 : 0);
   const sources = Object.entries(paquet.releves).sort(([a, ra], [b, rb]) => rang(ra) - rang(rb) || a.localeCompare(b));
   const projets = sources.flatMap(([, r]) => (r && Array.isArray(r.projets) ? r.projets : []));
+  agendaPresent = projets.some((p) => p && p.adaptateur === "agenda-videos" && p.statut === "ok");
   try {
     const gumroad = projets.find((p) => p && p.adaptateur === "gumroad");
     const locaux = projets.filter((p) => p && p.adaptateur === "produits-numeriques").flatMap((p) => liste(objet(p.details).produits));

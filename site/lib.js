@@ -563,10 +563,11 @@ export const ONGLETS = [
   { id: "resume", titre: "Accueil" },
   { id: "concours", titre: "Concours" },
   { id: "boutique", titre: "Boutique" },
+  { id: "publier", titre: "Publier" },
   { id: "live", titre: "Live" },
   { id: "autres", titre: "Autres" },
 ];
-const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "boutique", gumroad: "boutique", tiktok: "concours", "falling-pickaxe": "live" };
+const ONGLET_DE = { "bot-concours": "concours", "produits-numeriques": "boutique", gumroad: "boutique", tiktok: "concours", "falling-pickaxe": "live", "agenda-videos": "publier" };
 
 // Les projets rangés par onglet, dans l'ordre fixe de ONGLETS ; un onglet sans projet n'existe pas, sauf « Accueil » et ceux
 // demandés en plus (ex. « boutique » pour le carnet de revenus, qui n'est pas un projet).
@@ -1226,6 +1227,7 @@ const ICONES_SVG = {
   boutique: ["M5.5 8.5h13l-1 11.5h-11z", "M9 8.5V7a3 3 0 0 1 6 0v1.5"],
   tiktok: ["M9.5 17.5V5.8l9.5-2v11.7", "M3.5 17.5a3 3 0 1 0 6 0 3 3 0 1 0-6 0", "M13 15.5a3 3 0 1 0 6 0 3 3 0 1 0-6 0"],
   live: ["M12 10.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 1 0 0-3.6", "M8.2 8.2a5.4 5.4 0 0 0 0 7.6", "M15.8 8.2a5.4 5.4 0 0 1 0 7.6", "M5.4 5.4a9.4 9.4 0 0 0 0 13.2", "M18.6 5.4a9.4 9.4 0 0 1 0 13.2"],
+  publier: ["M4.5 6.5h15v13h-15z", "M4.5 10.5h15", "M8.5 4.5v4", "M15.5 4.5v4", "M9 15l2 2 4-4"],
   autres: ["M3.5 7.8A1.8 1.8 0 0 1 5.3 6h4l2 2.4h7.4a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H5.3a1.8 1.8 0 0 1-1.8-1.8z"],
 };
 
@@ -1335,4 +1337,119 @@ export function groupesTelegramDe(projets, onglet) {
     .flatMap((p) => listeSure(objetSur(p.details).groupes))
     .filter((g) => typeof g.nom === "string" && g.nom !== "" && typeof g.lien === "string" && g.lien !== "")
     .filter((g) => (g.projet === "boutique" ? "boutique" : "concours") === onglet);
+}
+
+// ---------- Publier : l'agenda des vidéos TikTok (légende, mots-dièses, commentaire, vidéo à enregistrer) ----------
+
+const IDENTIFIANT_VIDEO_AGENDA = /^[0-9a-f]{12}$/;
+const JOUR_AGENDA = /^(\d{4})-(\d{2})-(\d{2})$/;
+const HEURE_AGENDA = /^(\d{2})h(\d{2})$/;
+const MOT_DIESE = /^#[^\s#]+$/u;
+const LEGENDE_AGENDA_MAX = 3000; // TikTok accepte 2 200 caractères : au-delà, la légende n'est sûrement pas la bonne
+const MOTS_DIESE_MAX = 30;
+const FAITS_MAX = 500;
+const NOMS_DES_JOURS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const ORDRE_DES_PROJETS = { concours: 0, boutique: 1 };
+
+// Le jour « AAAA-MM-JJ » s'il existe vraiment (sinon null), en date UTC.
+function jourDuCalendrier(jour) {
+  const t = typeof jour === "string" ? JOUR_AGENDA.exec(jour) : null;
+  if (!t) return null;
+  const [annee, mois, j] = [Number(t[1]), Number(t[2]), Number(t[3])];
+  const d = new Date(Date.UTC(annee, mois - 1, j));
+  return d.getUTCFullYear() === annee && d.getUTCMonth() === mois - 1 && d.getUTCDate() === j ? d : null;
+}
+
+const texteOuRien = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+// Une vidéo du relevé, vérifiée : un identifiant opaque, un projet connu, un vrai jour et une vraie heure ; le reste devient « rien » s'il est abîmé.
+export function videoAgenda(v) {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  if (!o || typeof o.id !== "string" || !IDENTIFIANT_VIDEO_AGENDA.test(o.id) || !Object.hasOwn(ORDRE_DES_PROJETS, o.projet)) return null;
+  const heure = typeof o.heure === "string" ? HEURE_AGENDA.exec(o.heure) : null;
+  if (!jourDuCalendrier(o.jour) || !heure || Number(heure[1]) > 23 || Number(heure[2]) > 59) return null;
+  const legende = texteOuRien(o.legende);
+  const hashtags = [];
+  for (const h of Array.isArray(o.hashtags) ? o.hashtags : []) {
+    if (typeof h === "string" && MOT_DIESE.test(h) && !hashtags.includes(h) && hashtags.length < MOTS_DIESE_MAX) hashtags.push(h);
+  }
+  return {
+    id: o.id, projet: o.projet, compte: typeof o.compte === "string" && o.compte ? o.compte : null, jour: o.jour, heure: o.heure,
+    format: texteOuRien(o.format), titre: texteOuRien(o.titre), legende: legende && legende.length <= LEGENDE_AGENDA_MAX ? legende : null,
+    hashtags, commentaire: texteOuRien(o.commentaire), divulgation: typeof o.divulgation === "boolean" ? o.divulgation : null, fichier: o.fichier === true,
+  };
+}
+
+// Toutes les vidéos de l'agenda (projets « agenda-videos » relevés sans erreur), vérifiées.
+export function videosDeLAgenda(projets) {
+  if (!Array.isArray(projets)) return [];
+  return projets
+    .filter((p) => p && typeof p === "object" && p.adaptateur === "agenda-videos" && p.statut === "ok")
+    .flatMap((p) => listeSure(objetSur(p.details).videos))
+    .map(videoAgenda)
+    .filter(Boolean);
+}
+
+// L'agenda jour par jour, à partir d'aujourd'hui (« AAAA-MM-JJ », heure de Paris) : par heure, le Concours avant la Boutique.
+export function groupesAgenda(videos, aujourdhui) {
+  const debut = jourDuCalendrier(aujourdhui);
+  if (!debut || !Array.isArray(videos)) return [];
+  const demain = new Date(debut.getTime() + JOUR).toISOString().slice(0, 10);
+  const triees = videos
+    .filter((v) => v && typeof v === "object" && typeof v.id === "string" && typeof v.heure === "string" && jourDuCalendrier(v.jour) && v.jour >= aujourdhui)
+    .slice()
+    .sort((a, b) => a.jour.localeCompare(b.jour) || a.heure.localeCompare(b.heure)
+      || (ORDRE_DES_PROJETS[a.projet] ?? 9) - (ORDRE_DES_PROJETS[b.projet] ?? 9) || a.id.localeCompare(b.id));
+  const groupes = [];
+  for (const v of triees) {
+    if (groupes.length === 0 || groupes[groupes.length - 1].jour !== v.jour) {
+      const nom = NOMS_DES_JOURS[jourDuCalendrier(v.jour).getUTCDay()];
+      const date = `${v.jour.slice(8, 10)}/${v.jour.slice(5, 7)}`;
+      const relatif = v.jour === aujourdhui ? "aujourdhui" : v.jour === demain ? "demain" : "plus-tard";
+      const titre = relatif === "aujourdhui" ? `Aujourd'hui · ${nom} ${date}` : relatif === "demain" ? `Demain · ${nom} ${date}` : `${nom[0].toUpperCase()}${nom.slice(1)} ${date}`;
+      groupes.push({ jour: v.jour, titre, relatif, videos: [] });
+    }
+    groupes[groupes.length - 1].videos.push(v);
+  }
+  return groupes;
+}
+
+// Les mots-dièses d'une vidéo, prêts à coller : « #concours #cadeau ».
+export function texteHashtags(video) {
+  const h = objetSur(video).hashtags;
+  return Array.isArray(h) ? h.filter((x) => typeof x === "string").join(" ") : "";
+}
+
+// Les vidéos cochées « fait » sur cet appareil, relues (identifiants valides, sans doublon, les 500 plus récents).
+export function idsFaitsValides(liste) {
+  if (!Array.isArray(liste)) return [];
+  const ids = [];
+  for (const id of liste) if (typeof id === "string" && IDENTIFIANT_VIDEO_AGENDA.test(id) && !ids.includes(id)) ids.push(id);
+  return ids.slice(-FAITS_MAX);
+}
+
+export function basculerFait(ids, id) {
+  const liste = idsFaitsValides(ids);
+  if (typeof id !== "string" || !IDENTIFIANT_VIDEO_AGENDA.test(id)) return liste;
+  return liste.includes(id) ? liste.filter((x) => x !== id) : [...liste, id];
+}
+
+// La pastille de l'onglet « Publier » : les vidéos d'aujourd'hui pas encore faites.
+export function pastillePublier(videos, aujourdhui, faits) {
+  const fait = new Set(Array.isArray(faits) ? faits : []);
+  const n = (Array.isArray(videos) ? videos : []).filter((v) => v && v.jour === aujourdhui && !fait.has(v.id)).length;
+  return n > 0 ? { texte: String(n), niveau: "attention" } : null;
+}
+
+// Ce que dit l'agenda quand il n'y a rien à publier : une phrase courte.
+export function messageAgendaVide(details) {
+  const sources = objetSur(objetSur(details).sources);
+  if (sources.concours === false && sources.boutique === false) return "Les dossiers des vidéos sont introuvables sur ce PC.";
+  return "Rien à publier pour l'instant : les vidéos de la semaine arrivent le dimanche soir.";
+}
+
+// Comment « Enregistrer la vidéo » : sur téléphone, la feuille de partage (« Enregistrer la vidéo », TikTok…) ; ailleurs, un téléchargement.
+export function modeEnregistrement(appareil) {
+  const a = objetSur(appareil);
+  return a.tactile === true && a.partageFichiers === true ? "partage" : "telechargement";
 }
