@@ -1361,6 +1361,16 @@ function jourDuCalendrier(jour) {
 }
 
 const texteOuRien = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const BRANCHE_LIVRAISON = /^livraison-[A-Za-z0-9._-]{1,40}$/;
+const CHEMIN_VIDEO_LIVRAISON = /^Videos\/[^/]+\/[^/]+\.(?:mp4|mov)$/i;
+
+// Où est la vidéo sur GitHub (dépôt livraisons-videos) : { branche, chemin } seulement s'ils sont sûrs, sinon null.
+function githubDeLaVideo(g) {
+  const o = g && typeof g === "object" && !Array.isArray(g) ? g : null;
+  if (!o || typeof o.branche !== "string" || typeof o.chemin !== "string") return null;
+  if (!BRANCHE_LIVRAISON.test(o.branche) || o.branche.includes("..") || !CHEMIN_VIDEO_LIVRAISON.test(o.chemin) || o.chemin.split("/").includes("..")) return null;
+  return { branche: o.branche, chemin: o.chemin };
+}
 
 // Une vidéo du relevé, vérifiée : un identifiant opaque, un projet connu, un vrai jour et une vraie heure ; le reste devient « rien » s'il est abîmé.
 export function videoAgenda(v) {
@@ -1377,6 +1387,7 @@ export function videoAgenda(v) {
     id: o.id, projet: o.projet, compte: typeof o.compte === "string" && o.compte ? o.compte : null, jour: o.jour, heure: o.heure,
     format: texteOuRien(o.format), titre: texteOuRien(o.titre), legende: legende && legende.length <= LEGENDE_AGENDA_MAX ? legende : null,
     hashtags, commentaire: texteOuRien(o.commentaire), divulgation: typeof o.divulgation === "boolean" ? o.divulgation : null, fichier: o.fichier === true,
+    github: githubDeLaVideo(o.github),
   };
 }
 
@@ -1452,4 +1463,21 @@ export function messageAgendaVide(details) {
 export function modeEnregistrement(appareil) {
   const a = objetSur(appareil);
   return a.tactile === true && a.partageFichiers === true ? "partage" : "telechargement";
+}
+
+// Le fichier brut d'une vidéo de la Boutique sur GitHub (dépôt livraisons-videos, du même propriétaire que le bot), pour la page en ligne.
+export function adresseVideoGithub(video, depotBot) {
+  const g = objetSur(video).github;
+  const depot = depotProspection(depotBot);
+  if (!g || !depot) return null;
+  return `https://api.github.com/repos/${depot}/contents/${g.chemin.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(g.branche)}`;
+}
+
+// D'où vient la vidéo à enregistrer : le PC (tableau privé), GitHub (page en ligne, vidéo de la Boutique, avec la clé) ou le groupe Telegram.
+export function sourceVideo(video, contexte) {
+  const v = objetSur(video);
+  if (v.fichier !== true) return null;
+  const c = objetSur(contexte);
+  if (c.enLigne !== true) return "pc";
+  return v.github && c.cle === true ? "github" : "telegram";
 }

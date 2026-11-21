@@ -15,6 +15,7 @@ import {
   fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
   comptesTiktokDeLOnglet, rappelsDuCompte, rappelsGenerauxTiktok, videosDuCompte, groupesTelegramDe,
   videosDeLAgenda, groupesAgenda, texteHashtags, idsFaitsValides, basculerFait, pastillePublier, messageAgendaVide, modeEnregistrement,
+  adresseVideoGithub, sourceVideo,
 } from "./lib.js";
 import { deriverCle, dechiffrer } from "./chiffre.js";
 
@@ -2258,6 +2259,7 @@ const CLE_FAITS_AGENDA = "tableau.agenda_faits";
 const LIEN_TIKTOK_STUDIO = "https://www.tiktok.com/tiktokstudio/upload";
 const NOMS_DES_PROJETS = { concours: "Concours", boutique: "Boutique" };
 let agendaPresent = false; // rebranché à chaque affichage : les blocs TikTok proposent alors d'ouvrir l'agenda
+let projetsAffiches = []; // rebranché à chaque affichage : les projets du relevé (l'agenda y trouve le groupe Telegram de chaque projet)
 
 function lireFaits() {
   try {
@@ -2292,13 +2294,14 @@ function boutonCopier(libelle, texte) {
 
 // « Enregistrer la vidéo ». Sur téléphone : la feuille de partage, d'où l'on choisit « Enregistrer la vidéo » ou TikTok directement ;
 // si le téléphone demande un second appui (la vidéo met du temps à arriver), le bouton devient « 📲 Enregistrer ». Ailleurs : un téléchargement.
-function boutonVideo(v) {
-  const adresse = `api/agenda/video/${v.id}`;
+// `source` : { adresse, entetes, nom } — le PC (même site, entetes null) ou GitHub (adresse de l'API, en-têtes avec la clé, nom du fichier).
+function boutonVideo(v, source) {
+  const { adresse, entetes, nom: nomConnu } = source;
   const mode = modeEnregistrement({
     tactile: window.matchMedia("(pointer: coarse)").matches,
     partageFichiers: typeof navigator.canShare === "function" && typeof navigator.share === "function",
   });
-  if (mode === "telechargement") {
+  if (mode === "telechargement" && !entetes) { // ordinateur, tableau privé : un simple lien de téléchargement
     const a = el("a", "bouton bouton-secondaire agenda-bouton", "⬇️ Vidéo");
     a.href = adresse;
     a.setAttribute("download", "");
@@ -2310,13 +2313,13 @@ function boutonVideo(v) {
       b.disabled = true;
       b.textContent = "⏳ Préparation…";
       try {
-        const reponse = await fetch(adresse, { cache: "no-store" });
+        const reponse = await fetch(adresse, { cache: "no-store", ...(entetes ? { headers: entetes } : {}) });
         if (!reponse.ok) throw new Error(String(reponse.status));
-        const nom = /filename="([^"]+)"/.exec(reponse.headers.get("Content-Disposition") ?? "")?.[1] ?? `video-${v.jour}-${v.heure}.mp4`;
+        const nom = nomConnu ?? /filename="([^"]+)"/.exec(reponse.headers.get("Content-Disposition") ?? "")?.[1] ?? `video-${v.jour}-${v.heure}.mp4`;
         const contenu = await reponse.blob();
         fichier = new File([contenu], nom, { type: contenu.type || "video/mp4" });
       } catch {
-        annoncer("Vidéo introuvable : actualise la page.");
+        annoncer(entetes ? "Vidéo plus sur GitHub : elle est dans le groupe Telegram." : "Vidéo introuvable : actualise la page.");
         b.textContent = "⬇️ Vidéo";
         b.disabled = false;
         return;
@@ -2324,7 +2327,7 @@ function boutonVideo(v) {
       b.disabled = false;
       b.textContent = "📲 Enregistrer";
     }
-    if (!navigator.canShare({ files: [fichier] })) {
+    if (mode === "telechargement" || !navigator.canShare({ files: [fichier] })) {
       telechargerFichier(fichier);
       b.textContent = "⬇️ Vidéo";
       fichier = null;
@@ -2379,10 +2382,22 @@ function ligneAgenda(v, faits, videos) {
   if (v.legende) boutons.append(boutonCopier("📋 Légende", v.legende));
   if (v.hashtags.length > 0) boutons.append(boutonCopier("# Hashtags", texteHashtags(v)));
   if (v.commentaire) boutons.append(boutonCopier("💬 Commentaire", v.commentaire));
-  if (v.fichier && !EN_LIGNE) boutons.append(boutonVideo(v));
+  const jeton = EN_LIGNE ? lireJetonGithub() : null;
+  const source = sourceVideo(v, { enLigne: EN_LIGNE, cle: Boolean(jeton) });
+  const adresseGithub = source === "github" ? adresseVideoGithub(v, depotConcours) : null;
+  if (source === "pc") {
+    boutons.append(boutonVideo(v, { adresse: `api/agenda/video/${v.id}`, entetes: null, nom: null }));
+  } else if (adresseGithub) {
+    boutons.append(boutonVideo(v, {
+      adresse: adresseGithub, entetes: { ...enTetesGithub(jeton), Accept: "application/vnd.github.raw" }, nom: v.github.chemin.split("/").pop(),
+    }));
+  } else if (source) { // page en ligne sans GitHub (vidéos du Concours) : la vidéo est dans le groupe Telegram du projet
+    const groupe = groupesTelegramDe(projetsAffiches, v.projet)[0];
+    const lienGroupe = groupe ? lien("📹 Telegram", lienPlateforme(groupe.lien), "bouton bouton-secondaire agenda-bouton") : null;
+    if (lienGroupe) boutons.append(lienGroupe);
+  }
   if (boutons.childElementCount > 0) ligne.append(boutons);
   if (!v.fichier) ligne.append(el("p", "discret agenda-note", "Vidéo pas encore prête."));
-  else if (EN_LIGNE) ligne.append(el("p", "discret agenda-note", "La vidéo s'enregistre depuis le tableau privé."));
   return ligne;
 }
 
@@ -2534,6 +2549,7 @@ function afficher(paquet) {
   const sources = Object.entries(paquet.releves).sort(([a, ra], [b, rb]) => rang(ra) - rang(rb) || a.localeCompare(b));
   const projets = sources.flatMap(([, r]) => (r && Array.isArray(r.projets) ? r.projets : []));
   agendaPresent = projets.some((p) => p && p.adaptateur === "agenda-videos" && p.statut === "ok");
+  projetsAffiches = projets;
   try {
     const gumroad = projets.find((p) => p && p.adaptateur === "gumroad");
     const locaux = projets.filter((p) => p && p.adaptateur === "produits-numeriques").flatMap((p) => liste(objet(p.details).produits));
