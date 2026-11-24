@@ -1473,11 +1473,43 @@ export function adresseVideoGithub(video, depotBot) {
   return `https://api.github.com/repos/${depot}/contents/${g.chemin.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(g.branche)}`;
 }
 
-// D'où vient la vidéo à enregistrer : le PC (tableau privé), GitHub (page en ligne, vidéo de la Boutique, avec la clé) ou le groupe Telegram.
+// D'où vient la vidéo : le PC (tableau privé) ; en ligne, la copie chiffrée envoyée par le PC (branche « videos » du dépôt de la page),
+// sinon GitHub (vidéo de la Boutique, avec la clé), sinon le groupe Telegram.
 export function sourceVideo(video, contexte) {
   const v = objetSur(video);
   if (v.fichier !== true) return null;
   const c = objetSur(contexte);
   if (c.enLigne !== true) return "pc";
+  if (c.chiffree === true) return "chiffree";
   return v.github && c.cle === true ? "github" : "telegram";
+}
+
+// Les vidéos chiffrées que le PC a mises en ligne (charge.videos) : { base, fichiers: { id de vidéo: nom du fichier } }, ou null.
+// L'adresse ne peut être que la branche « videos » d'un dépôt sur raw.githubusercontent.com (ou « videos/ » à côté de la page, en essai).
+const BASE_VIDEOS_CHIFFREES = /^(?:https:\/\/raw\.githubusercontent\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\/videos\/|videos\/)$/;
+const NOM_VIDEO_CHIFFREE = /^[0-9a-f]{24}\.bin$/;
+
+export function videosChiffrees(charge) {
+  const v = objetSur(objetSur(charge).videos);
+  if (typeof v.base !== "string" || !BASE_VIDEOS_CHIFFREES.test(v.base)) return null; // « .. » ne peut pas former un morceau du chemin
+  const brut = objetSur(v.fichiers);
+  const fichiers = {};
+  for (const [id, nom] of Object.entries(brut)) {
+    if (IDENTIFIANT_VIDEO_AGENDA.test(id) && typeof nom === "string" && NOM_VIDEO_CHIFFREE.test(nom)) fichiers[id] = nom;
+  }
+  return Object.keys(fichiers).length > 0 ? { base: v.base, fichiers } : null;
+}
+
+export function adresseVideoChiffree(video, videos) {
+  const id = objetSur(video).id;
+  const v = objetSur(videos);
+  if (typeof id !== "string" || !IDENTIFIANT_VIDEO_AGENDA.test(id) || typeof v.base !== "string") return null;
+  const nom = Object.hasOwn(objetSur(v.fichiers), id) ? v.fichiers[id] : null;
+  return typeof nom === "string" && NOM_VIDEO_CHIFFREE.test(nom) ? v.base + nom : null;
+}
+
+// « video-2026-11-23-12h30.mp4 » : le nom du fichier enregistré sur le téléphone.
+export function nomDeVideo(video) {
+  const v = objetSur(video);
+  return typeof v.jour === "string" && typeof v.heure === "string" ? `video-${v.jour}-${v.heure}.mp4` : "video.mp4";
 }

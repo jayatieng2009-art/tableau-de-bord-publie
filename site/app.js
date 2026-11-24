@@ -15,9 +15,9 @@ import {
   fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
   comptesTiktokDeLOnglet, rappelsDuCompte, rappelsGenerauxTiktok, videosDuCompte, groupesTelegramDe,
   videosDeLAgenda, groupesAgenda, texteHashtags, idsFaitsValides, basculerFait, pastillePublier, messageAgendaVide, modeEnregistrement,
-  adresseVideoGithub, sourceVideo,
+  adresseVideoGithub, sourceVideo, videosChiffrees, adresseVideoChiffree, nomDeVideo,
 } from "./lib.js";
-import { deriverCle, dechiffrer } from "./chiffre.js";
+import { deriverCle, dechiffrer, dechiffrerOctets } from "./chiffre.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -2292,57 +2292,135 @@ function boutonCopier(libelle, texte) {
   return b;
 }
 
-// « Enregistrer la vidéo ». Sur téléphone : la feuille de partage, d'où l'on choisit « Enregistrer la vidéo » ou TikTok directement ;
-// si le téléphone demande un second appui (la vidéo met du temps à arriver), le bouton devient « 📲 Enregistrer ». Ailleurs : un téléchargement.
-// `source` : { adresse, entetes, nom } — le PC (même site, entetes null) ou GitHub (adresse de l'API, en-têtes avec la clé, nom du fichier).
-function boutonVideo(v, source) {
-  const { adresse, entetes, nom: nomConnu } = source;
+// ---------- Le lecteur de vidéos (onglet Publier) ----------
+// « ▶️ Vidéo » : la vidéo s'affiche dans l'appli (récupérée, et déchiffrée si elle vient de la copie chiffrée en ligne), avec
+// « 📲 Enregistrer » pour la garder sur le téléphone ou l'envoyer à TikTok. Les dernières vidéos ouvertes restent en mémoire pendant la visite.
+
+const VIDEOS_EN_MEMOIRE = 3;
+const videosEnMemoire = new Map(); // id de la vidéo → File (la plus récente en dernier)
+let fermerLecteurOuvert = null;
+
+async function recupererVideo(adresse, options, nom) {
+  const reponse = await fetch(adresse, options);
+  if (!reponse.ok) throw new Error(String(reponse.status));
+  const contenu = await reponse.blob();
+  const nomFichier = nom ?? /filename="([^"]+)"/.exec(reponse.headers.get("Content-Disposition") ?? "")?.[1] ?? "video.mp4";
+  return new File([contenu], nomFichier, { type: contenu.type || "video/mp4" });
+}
+
+// La copie chiffrée (branche « videos » du dépôt de la page) : une lecture simple, sans en-tête, puis déchiffrée avec la clé de la page.
+async function recupererVideoChiffree(adresse, nom) {
+  if (!cleDeLaPage) throw new Error("clé absente");
+  const reponse = await fetch(adresse); // cache normal : un « introuvable » passager (juste après un envoi) n'est pas gardé longtemps
+  if (!reponse.ok) throw new Error(String(reponse.status));
+  const clair = await dechiffrerOctets(new Uint8Array(await reponse.arrayBuffer()), cleDeLaPage);
+  return new File([clair], nom, { type: "video/mp4" });
+}
+
+async function videoEnMemoire(id, charger) {
+  if (videosEnMemoire.has(id)) {
+    const fichier = videosEnMemoire.get(id);
+    videosEnMemoire.delete(id);
+    videosEnMemoire.set(id, fichier);
+    return fichier;
+  }
+  const fichier = await charger();
+  videosEnMemoire.set(id, fichier);
+  while (videosEnMemoire.size > VIDEOS_EN_MEMOIRE) videosEnMemoire.delete(videosEnMemoire.keys().next().value);
+  return fichier;
+}
+
+// Sur téléphone : la feuille de partage (« Enregistrer la vidéo » ou TikTok directement). Ailleurs : un téléchargement.
+function boutonEnregistrer(fichier) {
   const mode = modeEnregistrement({
     tactile: window.matchMedia("(pointer: coarse)").matches,
     partageFichiers: typeof navigator.canShare === "function" && typeof navigator.share === "function",
   });
-  if (mode === "telechargement" && !entetes) { // ordinateur, tableau privé : un simple lien de téléchargement
-    const a = el("a", "bouton bouton-secondaire agenda-bouton", "⬇️ Vidéo");
-    a.href = adresse;
-    a.setAttribute("download", "");
-    return a;
-  }
-  let fichier = null;
-  const b = bouton("⬇️ Vidéo", "bouton-secondaire agenda-bouton", async () => {
-    if (!fichier) {
-      b.disabled = true;
-      b.textContent = "⏳ Préparation…";
-      try {
-        const reponse = await fetch(adresse, { cache: "no-store", ...(entetes ? { headers: entetes } : {}) });
-        if (!reponse.ok) throw new Error(String(reponse.status));
-        const nom = nomConnu ?? /filename="([^"]+)"/.exec(reponse.headers.get("Content-Disposition") ?? "")?.[1] ?? `video-${v.jour}-${v.heure}.mp4`;
-        const contenu = await reponse.blob();
-        fichier = new File([contenu], nom, { type: contenu.type || "video/mp4" });
-      } catch {
-        annoncer(entetes ? "Vidéo plus sur GitHub : elle est dans le groupe Telegram." : "Vidéo introuvable : actualise la page.");
-        b.textContent = "⬇️ Vidéo";
-        b.disabled = false;
-        return;
-      }
-      b.disabled = false;
-      b.textContent = "📲 Enregistrer";
-    }
+  return bouton("📲 Enregistrer", "bouton-principal lecteur-enregistrer", async () => {
     if (mode === "telechargement" || !navigator.canShare({ files: [fichier] })) {
       telechargerFichier(fichier);
-      b.textContent = "⬇️ Vidéo";
-      fichier = null;
       return;
     }
     try {
       await navigator.share({ files: [fichier] });
-      b.textContent = "⬇️ Vidéo";
-      fichier = null;
-    } catch (e) {
-      if (e && e.name === "AbortError") return; // partage annulé : la vidéo reste prête, un appui suffit
-      // le téléphone veut un nouvel appui (la vidéo a mis du temps à arriver) : le bouton dit « 📲 Enregistrer »
+    } catch {
+      // partage annulé ou refusé : un nouvel appui suffit
     }
   });
-  return b;
+}
+
+// `secours` : { message, lien } — ce qui s'affiche si la vidéo ne vient pas (le lien du groupe Telegram en ligne).
+function boutonLecteur(v, charger, secours) {
+  return bouton("▶️ Vidéo", "bouton-secondaire agenda-bouton", () => ouvrirLecteur(v, charger, secours));
+}
+
+function ouvrirLecteur(v, charger, secours) {
+  if (fermerLecteurOuvert) fermerLecteurOuvert();
+  const precedent = document.activeElement;
+  const titre = [v.heure, v.format].filter(Boolean).join(" · ") || "Vidéo";
+  const fond = el("div", "lecteur");
+  fond.setAttribute("role", "dialog");
+  fond.setAttribute("aria-modal", "true");
+  fond.setAttribute("aria-label", `Vidéo ${titre}`);
+  const haut = el("div", "lecteur-haut");
+  const fermer = bouton("✕", "bouton-secondaire lecteur-fermer", () => fermerLecteur());
+  fermer.setAttribute("aria-label", "Fermer la vidéo");
+  haut.append(el("span", "lecteur-titre", titre), fermer);
+  const scene = el("div", "lecteur-scene");
+  const attente = el("p", "lecteur-attente", "⏳ Chargement…");
+  scene.append(attente);
+  const bas = el("div", "lecteur-bas");
+  fond.append(haut, scene, bas);
+  document.body.append(fond);
+  document.body.classList.add("lecteur-actif");
+  let adresse = null;
+  let ferme = false;
+
+  function touche(e) {
+    if (e.key === "Escape") fermerLecteur();
+  }
+
+  function fermerLecteur() {
+    if (ferme) return;
+    ferme = true;
+    document.removeEventListener("keydown", touche);
+    const video = scene.querySelector("video");
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    if (adresse) URL.revokeObjectURL(adresse);
+    fond.remove();
+    document.body.classList.remove("lecteur-actif");
+    fermerLecteurOuvert = null;
+    if (precedent && typeof precedent.focus === "function") precedent.focus();
+  }
+
+  document.addEventListener("keydown", touche);
+  fond.addEventListener("click", (e) => {
+    if (e.target === fond || e.target === scene) fermerLecteur();
+  });
+  fermerLecteurOuvert = fermerLecteur;
+  fermer.focus();
+
+  videoEnMemoire(v.id, charger).then((fichier) => {
+    if (ferme) return;
+    adresse = URL.createObjectURL(fichier);
+    const video = el("video", "lecteur-video");
+    video.controls = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.preload = "auto";
+    video.src = adresse;
+    attente.replaceWith(video);
+    video.play().catch(() => {}); // certains téléphones attendent un appui sur ▶
+    bas.append(boutonEnregistrer(fichier));
+  }).catch(() => {
+    if (ferme) return;
+    attente.textContent = secours.message;
+    if (secours.lien) bas.append(secours.lien);
+  });
 }
 
 function telechargerFichier(fichier) {
@@ -2383,17 +2461,23 @@ function ligneAgenda(v, faits, videos) {
   if (v.hashtags.length > 0) boutons.append(boutonCopier("# Hashtags", texteHashtags(v)));
   if (v.commentaire) boutons.append(boutonCopier("💬 Commentaire", v.commentaire));
   const jeton = EN_LIGNE ? lireJetonGithub() : null;
-  const source = sourceVideo(v, { enLigne: EN_LIGNE, cle: Boolean(jeton) });
+  const adresseChiffree = EN_LIGNE ? adresseVideoChiffree(v, videosChiffrees(chargeEnLigne)) : null;
+  const source = sourceVideo(v, { enLigne: EN_LIGNE, cle: Boolean(jeton), chiffree: Boolean(adresseChiffree) });
   const adresseGithub = source === "github" ? adresseVideoGithub(v, depotConcours) : null;
+  const groupe = EN_LIGNE ? groupesTelegramDe(projetsAffiches, v.projet)[0] : null;
+  const lienTelegram = () => (groupe ? lien("📹 Telegram", lienPlateforme(groupe.lien), "bouton bouton-secondaire agenda-bouton") : null);
   if (source === "pc") {
-    boutons.append(boutonVideo(v, { adresse: `api/agenda/video/${v.id}`, entetes: null, nom: null }));
+    boutons.append(boutonLecteur(v, () => recupererVideo(`api/agenda/video/${v.id}`, { cache: "no-store" }, null),
+      { message: "Vidéo introuvable : actualise la page.", lien: null }));
+  } else if (source === "chiffree") { // la copie chiffrée envoyée par le PC (les 7 prochains jours)
+    boutons.append(boutonLecteur(v, () => recupererVideoChiffree(adresseChiffree, nomDeVideo(v)),
+      { message: "Vidéo pas lisible pour l'instant : elle est dans le groupe Telegram.", lien: lienTelegram() }));
   } else if (adresseGithub) {
-    boutons.append(boutonVideo(v, {
-      adresse: adresseGithub, entetes: { ...enTetesGithub(jeton), Accept: "application/vnd.github.raw" }, nom: v.github.chemin.split("/").pop(),
-    }));
-  } else if (source) { // page en ligne sans GitHub (vidéos du Concours) : la vidéo est dans le groupe Telegram du projet
-    const groupe = groupesTelegramDe(projetsAffiches, v.projet)[0];
-    const lienGroupe = groupe ? lien("📹 Telegram", lienPlateforme(groupe.lien), "bouton bouton-secondaire agenda-bouton") : null;
+    const options = { cache: "no-store", headers: { ...enTetesGithub(jeton), Accept: "application/vnd.github.raw" } };
+    boutons.append(boutonLecteur(v, () => recupererVideo(adresseGithub, options, v.github.chemin.split("/").pop()),
+      { message: "Vidéo plus sur GitHub : elle est dans le groupe Telegram.", lien: lienTelegram() }));
+  } else if (source) { // pas de copie en ligne : la vidéo est dans le groupe Telegram du projet
+    const lienGroupe = lienTelegram();
     if (lienGroupe) boutons.append(lienGroupe);
   }
   if (boutons.childElementCount > 0) ligne.append(boutons);
@@ -2670,6 +2754,7 @@ const CLE_JETON_GITHUB = "tableau.jeton_github";
 let motDePasse = null; // gardé en mémoire tant que la page est ouverte
 let chargementEnCours = false;
 let chargeEnLigne = null; // { paquet, revenus, publie_a } : le contenu du fichier chiffré une fois ouvert
+let cleDeLaPage = null; // la clé tirée du mot de passe : elle déchiffre aussi les vidéos mises en ligne par le PC
 
 function lireStockage(cle) {
   try {
@@ -2755,7 +2840,9 @@ async function lireChargeEnLigne() {
       }
     }
     try {
-      const charge = await dechiffrer(enveloppe, await deriverCle(motDePasse, enveloppe));
+      const cle = await deriverCle(motDePasse, enveloppe);
+      const charge = await dechiffrer(enveloppe, cle);
+      cleDeLaPage = cle; // la même clé ouvre les vidéos chiffrées
       if (aMemoriser) ecrireStockage(CLE_MOT_DE_PASSE, motDePasse);
       return charge;
     } catch (e) {

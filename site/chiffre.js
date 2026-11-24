@@ -63,3 +63,21 @@ export async function dechiffrer(enveloppe, cle) {
     throw erreur("format", "Données illisibles après déchiffrement.");
   }
 }
+
+// ---------- Vidéos chiffrées (même clé que les données) ----------
+
+const ENTETE_VIDEO = [0x54, 0x42, 0x56, 0x31]; // « TBV1 »
+const TAILLE_MAX_VIDEO = 120 * 1024 * 1024;
+
+// Le contenu d'une vidéo chiffrée par chiffrer.mjs (chiffrerOctets / --fichiers) : « TBV1 » + vecteur + texte chiffré + étiquette.
+export async function dechiffrerOctets(octets, cle) {
+  const o = octets instanceof Uint8Array ? octets : octets instanceof ArrayBuffer ? new Uint8Array(octets) : null;
+  if (!o || o.length < 4 + 12 + 16 || o.length > TAILLE_MAX_VIDEO || ENTETE_VIDEO.some((b, i) => o[i] !== b)) {
+    throw erreur("format", "Vidéo illisible.");
+  }
+  try {
+    return new Uint8Array(await globalThis.crypto.subtle.decrypt({ name: "AES-GCM", iv: o.subarray(4, 16) }, cle, o.subarray(16)));
+  } catch {
+    throw erreur("mot-de-passe", "Vidéo illisible : mot de passe différent ou fichier abîmé.");
+  }
+}

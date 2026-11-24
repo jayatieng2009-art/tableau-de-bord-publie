@@ -429,3 +429,23 @@ body.entree .accueil .carte, body.entree .cartes > .carte { animation-delay: 0.2
 .agenda-faite .agenda-boutons { display: none; }
 .agenda-raccourci { margin: 2px 0 8px; }
 @media (min-width: 700px) { .agenda-boutons { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ---------- Lecteur de vidéos (onglet Publier) ---------- */
+body.lecteur-actif { overflow: hidden; }
+.lecteur {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  background: rgb(5 7 11 / 95%);
+  animation: lecteur-entree 0.2s var(--elan);
+}
+.lecteur-haut { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, 720px); margin: 0 auto; }
+.lecteur-titre { font-weight: 600; color: var(--texte); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lecteur-fermer { min-width: 44px; min-height: 44px; font-size: 1.1rem; }
+.lecteur-scene { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.lecteur-video { display: block; max-width: 100%; max-height: 100%; border-radius: 14px; background: #000; }
+.lecteur-attente { color: var(--discret); text-align: center; max-width: 26rem; margin: 0; }
+.lecteur-bas { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.lecteur-enregistrer { min-height: 48px; padding-inline: 28px; }
+@keyframes lecteur-entree { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .lecteur { animation: none; } }
