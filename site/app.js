@@ -15,7 +15,7 @@ import {
   fileEnvoiValide, ajouterDecision, retirerDecision, prochainEnvoi, toucheDeTri,
   comptesTiktokDeLOnglet, rappelsDuCompte, rappelsGenerauxTiktok, videosDuCompte, groupesTelegramDe,
   videosDeLAgenda, groupesAgenda, texteHashtags, idsFaitsValides, basculerFait, pastillePublier, messageAgendaVide, modeEnregistrement,
-  adresseVideoGithub, sourceVideo, videosChiffrees, adresseVideoChiffree, nomDeVideo,
+  adresseVideoGithub, sourceVideo, videosChiffrees, adresseVideoChiffree, nomDeVideo, lignesEtatProjet,
 } from "./lib.js";
 import { deriverCle, dechiffrer, dechiffrerOctets } from "./chiffre.js";
 
@@ -76,6 +76,10 @@ function carteProjet(projet) {
       const quand = typeof details.derniere_modification === "string" ? details.derniere_modification : null;
       ligneDetail(liste, "Dernière modification", quand ? `${dateLocale(quand)} (${ageLisible(quand, new Date())})` : "aucun fichier");
       ligneDetail(liste, "Fichiers", `${formaterNombre(details.nb_fichiers)}${details.tronque === true ? " ou plus" : ""}`);
+    } else if (details.type === "etat-projet") {
+      // Un projet qui tient lui-même son état (etat_projet.json) : étape, suite, chiffres clés, gestes à faire.
+      for (const [nom, valeur] of lignesEtatProjet(details)) ligneDetail(liste, nom, valeur);
+      if (typeof details.mis_a_jour === "string") ligneDetail(liste, "Mis à jour", `${dateLocale(details.mis_a_jour)} (${ageLisible(details.mis_a_jour, new Date())})`);
     } else {
       ligneDetail(liste, "Branche", details.branche ?? "?");
       ligneDetail(liste, "Dernier commit", commit.sujet ?? "?");

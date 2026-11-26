@@ -1513,3 +1513,20 @@ export function nomDeVideo(video) {
   const v = objetSur(video);
   return typeof v.jour === "string" && typeof v.heure === "string" ? `video-${v.jour}-${v.heure}.mp4` : "video.mp4";
 }
+
+// Carte d'un projet qui tient lui-même son état (adaptateur « etat-projet ») : les lignes [nom, valeur] à afficher, dans l'ordre.
+// Étape + titre (+ statut), suite, chiffres clés, puis gestes à faire. Une donnée inattendue ne donne aucune ligne, jamais une erreur.
+export function lignesEtatProjet(details) {
+  const d = details && typeof details === "object" && !Array.isArray(details) ? details : {};
+  const texte = (v) => (typeof v === "string" || typeof v === "number" ? String(v).trim() : "");
+  const lignes = [];
+  const etape = [texte(d.etape), texte(d.titre)].filter(Boolean).join(" · ");
+  if (etape) lignes.push(["Étape", texte(d.statut) ? `${etape} (${texte(d.statut)})` : etape]);
+  if (texte(d.prochaine)) lignes.push(["Ensuite", texte(d.prochaine)]);
+  for (const c of Array.isArray(d.chiffres) ? d.chiffres : []) {
+    if (Array.isArray(c) && texte(c[0]) && texte(c[1])) lignes.push([texte(c[0]), texte(c[1])]);
+  }
+  const gestes = (Array.isArray(d.a_faire) ? d.a_faire : []).map(texte).filter(Boolean);
+  if (gestes.length > 0) lignes.push(["À faire", gestes.join(" · ")]);
+  return lignes;
+}
