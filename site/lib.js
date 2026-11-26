@@ -1521,12 +1521,12 @@ export function lignesEtatProjet(details) {
   const texte = (v) => (typeof v === "string" || typeof v === "number" ? String(v).trim() : "");
   const lignes = [];
   const etape = [texte(d.etape), texte(d.titre)].filter(Boolean).join(" · ");
-  if (etape) lignes.push(["Étape", texte(d.statut) ? `${etape} (${texte(d.statut)})` : etape]);
+  if (etape) lignes.push(["Étape", texte(d.statut_etape) ? `${etape} (${texte(d.statut_etape)})` : etape]);
   if (texte(d.prochaine)) lignes.push(["Ensuite", texte(d.prochaine)]);
   for (const c of Array.isArray(d.chiffres) ? d.chiffres : []) {
     if (Array.isArray(c) && texte(c[0]) && texte(c[1])) lignes.push([texte(c[0]), texte(c[1])]);
   }
-  const gestes = (Array.isArray(d.a_faire) ? d.a_faire : []).map(texte).filter(Boolean);
+  const gestes = (Array.isArray(d.gestes) ? d.gestes : []).map(texte).filter(Boolean);
   if (gestes.length > 0) lignes.push(["À faire", gestes.join(" · ")]);
   return lignes;
 }

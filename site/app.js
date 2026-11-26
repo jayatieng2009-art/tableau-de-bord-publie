@@ -2539,6 +2539,7 @@ function carteDuProjet(projet, maintenant) {
   if (projet.adaptateur === "agenda-videos" && projet.statut === "ok") return carteSure(projet, maintenant, carteAgenda);
   if (projet.adaptateur === "produits-numeriques" && projet.statut === "ok") return carteSure(projet, maintenant, carteProduits);
   if (projet.adaptateur === "gumroad" && projet.statut === "ok") return carteSure(projet, maintenant, carteGumroad);
+  if (projet.adaptateur === "etat-projet" && projet.statut === "ok") return carteSure(projet, maintenant, carteProjet);
   if (projet.adaptateur === "falling-pickaxe" && projet.statut === "ok") {
     try {
       return carteFallingPickaxe(projet, maintenant);
